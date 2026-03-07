@@ -1,0 +1,22 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local SIZE = 15
+local TRANSPARENCY = 0.6
+
+task.spawn(function()
+    while true do
+        for _, player in Players:GetChildren() do
+            if player ~= LocalPlayer then
+                pcall(function()
+                    local head = player.Character and player.Character:FindFirstChild("Head")
+                    if head then
+                        head.Size = Vector3.new(SIZE, SIZE, SIZE)
+                        head.Transparency = TRANSPARENCY
+                        head.CanCollide = false
+                    end
+                end)
+            end
+        end
+        task.wait(0.3)
+    end
+end)
