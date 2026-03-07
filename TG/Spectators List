@@ -1,0 +1,338 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+
+local TEAM_NAME = "SPECTATOR"
+local UPDATE_INTERVAL = 0.5
+local MAX_VISIBLE = 15
+
+local UI_WIDTH = 240
+local HEADER_HEIGHT = 36
+local ROW_HEIGHT = 24
+local FOOTER_HEIGHT = 22
+local PADDING = 12
+local ROUND = 8
+
+local uiX = 16
+local uiY = 200
+
+local COLORS = {
+    bg = Color3.fromRGB(12, 12, 18),
+    headerBg = Color3.fromRGB(18, 16, 28),
+    accent = Color3.fromRGB(140, 110, 255),
+    accentDim = Color3.fromRGB(90, 70, 180),
+    border = Color3.fromRGB(45, 40, 65),
+    title = Color3.fromRGB(235, 230, 255),
+    countBg = Color3.fromRGB(140, 110, 255),
+    countText = Color3.fromRGB(255, 255, 255),
+    name = Color3.fromRGB(190, 185, 210),
+    dot = Color3.fromRGB(100, 220, 160),
+    separator = Color3.fromRGB(35, 32, 50),
+    empty = Color3.fromRGB(75, 70, 95),
+    footer = Color3.fromRGB(160, 150, 200),
+    shadow = Color3.fromRGB(5, 5, 8),
+}
+
+local allDrawings = {}
+
+local function create(class, props)
+    local obj = Drawing.new(class)
+    for k, v in props do
+        obj[k] = v
+    end
+    allDrawings[#allDrawings + 1] = obj
+    return obj
+end
+
+local shadow = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.shadow,
+    Opacity = 0.4, Rounding = ROUND + 2,
+    Position = Vector2.new(0, 0), Size = Vector2.new(0, 0), ZIndex = 0,
+})
+
+local mainBg = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.bg,
+    Opacity = 0.96, Rounding = ROUND,
+    Position = Vector2.new(0, 0), Size = Vector2.new(0, 0), ZIndex = 1,
+})
+
+local mainBorder = create("Square", {
+    Visible = false, Filled = false, Color = COLORS.border,
+    Opacity = 0.5, Thickness = 1, Rounding = ROUND,
+    Position = Vector2.new(0, 0), Size = Vector2.new(0, 0), ZIndex = 2,
+})
+
+local headerBg = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.headerBg,
+    Opacity = 1, Rounding = 0,
+    Position = Vector2.new(0, 0), Size = Vector2.new(0, 0), ZIndex = 3,
+})
+
+local headerTopRound = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.headerBg,
+    Opacity = 1, Rounding = ROUND,
+    Position = Vector2.new(0, 0), Size = Vector2.new(0, 0), ZIndex = 3,
+})
+
+local accentLine = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.accent,
+    Opacity = 1, Position = Vector2.new(0, 0),
+    Size = Vector2.new(UI_WIDTH, 2), ZIndex = 5,
+})
+
+local accentGlow = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.accent,
+    Opacity = 0.15, Position = Vector2.new(0, 0),
+    Size = Vector2.new(UI_WIDTH, 6), ZIndex = 4,
+})
+
+local eyeCircle = create("Circle", {
+    Visible = false, Filled = true, Color = COLORS.accent,
+    Opacity = 1, Radius = 5, NumSides = 20,
+    Position = Vector2.new(0, 0), ZIndex = 6,
+})
+
+local eyeInner = create("Circle", {
+    Visible = false, Filled = true, Color = COLORS.headerBg,
+    Opacity = 1, Radius = 2, NumSides = 16,
+    Position = Vector2.new(0, 0), ZIndex = 7,
+})
+
+local titleText = create("Text", {
+    Visible = false, Color = COLORS.title, Opacity = 1,
+    Size = 15, Center = false, Outline = true,
+    OutlineColor = Vector3.new(0, 0, 0),
+    Position = Vector2.new(0, 0), Text = "SPECTATORS", ZIndex = 6,
+})
+
+local countBadgeBg = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.countBg,
+    Opacity = 0.9, Rounding = 6,
+    Position = Vector2.new(0, 0), Size = Vector2.new(0, 0), ZIndex = 6,
+})
+
+local countBadgeText = create("Text", {
+    Visible = false, Color = COLORS.countText, Opacity = 1,
+    Size = 12, Center = true, Outline = false,
+    Position = Vector2.new(0, 0), Text = "0", ZIndex = 7,
+})
+
+local nameTexts = {}
+local nameDots = {}
+local nameSeps = {}
+
+for i = 1, MAX_VISIBLE do
+    nameDots[i] = create("Circle", {
+        Visible = false, Filled = true, Color = COLORS.dot,
+        Opacity = 0.9, Radius = 3, NumSides = 12,
+        Position = Vector2.new(0, 0), ZIndex = 6,
+    })
+
+    nameTexts[i] = create("Text", {
+        Visible = false, Color = COLORS.name, Opacity = 1,
+        Size = 13, Center = false, Outline = true,
+        OutlineColor = Vector3.new(0, 0, 0),
+        Position = Vector2.new(0, 0), Text = "", ZIndex = 6,
+    })
+
+    if i < MAX_VISIBLE then
+        nameSeps[i] = create("Square", {
+            Visible = false, Filled = true, Color = COLORS.separator,
+            Opacity = 0.4, Position = Vector2.new(0, 0),
+            Size = Vector2.new(UI_WIDTH - PADDING * 2, 1), ZIndex = 5,
+        })
+    end
+end
+
+local emptyText = create("Text", {
+    Visible = false, Color = COLORS.empty, Opacity = 0.6,
+    Size = 12, Center = true, Outline = true,
+    OutlineColor = Vector3.new(0, 0, 0),
+    Position = Vector2.new(0, 0), Text = "Nenhum spectator", ZIndex = 6,
+})
+
+local footerSep = create("Square", {
+    Visible = false, Filled = true, Color = COLORS.separator,
+    Opacity = 0.3, Position = Vector2.new(0, 0),
+    Size = Vector2.new(UI_WIDTH - PADDING * 2, 1), ZIndex = 5,
+})
+
+local footerText = create("Text", {
+    Visible = false, Color = COLORS.footer, Opacity = 0.9,
+    Size = 11, Center = true, Outline = true,
+    OutlineColor = Vector3.new(0, 0, 0),
+    Position = Vector2.new(0, 0), Text = "made by @hortalex", ZIndex = 6,
+})
+
+local dragging = false
+local dragOffsetX = 0
+local dragOffsetY = 0
+local wasPressed = false
+
+local cachedSpecs = {}
+local lastUpdate = 0
+
+local function getSpectators()
+    local specs = {}
+    for _, player in Players:GetChildren() do
+        pcall(function()
+            if player.Team and player.Team.Name == TEAM_NAME then
+                specs[#specs + 1] = player.DisplayName
+            end
+        end)
+    end
+    table.sort(specs, function(a, b)
+        return a:lower() < b:lower()
+    end)
+    return specs
+end
+
+local function isMouseOver(mx, my, x, y, w, h)
+    return mx >= x and mx <= x + w and my >= y and my <= y + h
+end
+
+RunService.Render:Connect(function()
+    local mousePos = UIS:GetMouseLocation()
+    local mx, my = mousePos.X, mousePos.Y
+    local pressed = isleftpressed()
+
+    if pressed and not wasPressed then
+        if isMouseOver(mx, my, uiX, uiY, UI_WIDTH, HEADER_HEIGHT) then
+            dragging = true
+            dragOffsetX = mx - uiX
+            dragOffsetY = my - uiY
+        end
+    end
+
+    if not pressed then
+        dragging = false
+    end
+
+    if dragging then
+        uiX = mx - dragOffsetX
+        uiY = my - dragOffsetY
+    end
+
+    wasPressed = pressed
+
+    local now = tick()
+    if now - lastUpdate > UPDATE_INTERVAL then
+        cachedSpecs = getSpectators()
+        lastUpdate = now
+    end
+
+    local specs = cachedSpecs
+    local specCount = #specs
+    local visibleCount = math.min(specCount, MAX_VISIBLE)
+
+    local bodyContentH = 0
+    if specCount == 0 then
+        bodyContentH = ROW_HEIGHT + PADDING
+    else
+        bodyContentH = visibleCount * ROW_HEIGHT + PADDING
+    end
+
+    local totalH = HEADER_HEIGHT + 2 + bodyContentH + FOOTER_HEIGHT
+
+    shadow.Position = Vector2.new(uiX + 3, uiY + 3)
+    shadow.Size = Vector2.new(UI_WIDTH, totalH)
+    shadow.Visible = true
+
+    mainBg.Position = Vector2.new(uiX, uiY)
+    mainBg.Size = Vector2.new(UI_WIDTH, totalH)
+    mainBg.Visible = true
+
+    mainBorder.Position = Vector2.new(uiX, uiY)
+    mainBorder.Size = Vector2.new(UI_WIDTH, totalH)
+    mainBorder.Visible = true
+
+    headerTopRound.Position = Vector2.new(uiX, uiY)
+    headerTopRound.Size = Vector2.new(UI_WIDTH, HEADER_HEIGHT)
+    headerTopRound.Visible = true
+
+    headerBg.Position = Vector2.new(uiX, uiY + ROUND)
+    headerBg.Size = Vector2.new(UI_WIDTH, HEADER_HEIGHT - ROUND)
+    headerBg.Visible = true
+
+    accentLine.Position = Vector2.new(uiX, uiY + HEADER_HEIGHT)
+    accentLine.Visible = true
+
+    accentGlow.Position = Vector2.new(uiX, uiY + HEADER_HEIGHT)
+    accentGlow.Visible = true
+
+    local headerCenterY = uiY + HEADER_HEIGHT / 2
+
+    eyeCircle.Position = Vector2.new(uiX + PADDING + 5, headerCenterY)
+    eyeCircle.Visible = true
+
+    eyeInner.Position = Vector2.new(uiX + PADDING + 5, headerCenterY)
+    eyeInner.Visible = true
+
+    titleText.Position = Vector2.new(uiX + PADDING + 18, uiY + 10)
+    titleText.Visible = true
+
+    local countStr = tostring(specCount)
+    local badgeW = math.max(24, #countStr * 8 + 12)
+    countBadgeBg.Position = Vector2.new(uiX + UI_WIDTH - PADDING - badgeW, uiY + 8)
+    countBadgeBg.Size = Vector2.new(badgeW, 20)
+    countBadgeBg.Visible = true
+
+    countBadgeText.Position = Vector2.new(uiX + UI_WIDTH - PADDING - badgeW / 2, uiY + 10)
+    countBadgeText.Text = countStr
+    countBadgeText.Visible = true
+
+    local bodyStartY = uiY + HEADER_HEIGHT + 2
+
+    if specCount == 0 then
+        emptyText.Position = Vector2.new(uiX + UI_WIDTH / 2, bodyStartY + bodyContentH / 2 - 6)
+        emptyText.Visible = true
+
+        for i = 1, MAX_VISIBLE do
+            nameTexts[i].Visible = false
+            nameDots[i].Visible = false
+            if nameSeps[i] then nameSeps[i].Visible = false end
+        end
+    else
+        emptyText.Visible = false
+
+        for i = 1, MAX_VISIBLE do
+            if i <= visibleCount then
+                local rowY = bodyStartY + PADDING / 2 + (i - 1) * ROW_HEIGHT
+
+                local displayName = specs[i]
+                if i == MAX_VISIBLE and specCount > MAX_VISIBLE then
+                    displayName = "+" .. tostring(specCount - MAX_VISIBLE + 1) .. " mais..."
+                    nameDots[i].Color = COLORS.accentDim
+                else
+                    nameDots[i].Color = COLORS.dot
+                end
+
+                nameDots[i].Position = Vector2.new(uiX + PADDING + 4, rowY + ROW_HEIGHT / 2)
+                nameDots[i].Visible = true
+
+                nameTexts[i].Text = displayName
+                nameTexts[i].Position = Vector2.new(uiX + PADDING + 14, rowY + 4)
+                nameTexts[i].Visible = true
+
+                if nameSeps[i] and i < visibleCount then
+                    nameSeps[i].Position = Vector2.new(uiX + PADDING, rowY + ROW_HEIGHT - 1)
+                    nameSeps[i].Visible = true
+                elseif nameSeps[i] then
+                    nameSeps[i].Visible = false
+                end
+            else
+                nameTexts[i].Visible = false
+                nameDots[i].Visible = false
+                if nameSeps[i] then nameSeps[i].Visible = false end
+            end
+        end
+    end
+
+    local footerY = uiY + totalH - FOOTER_HEIGHT
+
+    footerSep.Position = Vector2.new(uiX + PADDING, footerY)
+    footerSep.Visible = true
+
+    footerText.Position = Vector2.new(uiX + UI_WIDTH / 2, footerY + 6)
+    footerText.Visible = true
+end)
