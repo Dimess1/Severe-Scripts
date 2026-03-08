@@ -1,0 +1,346 @@
+
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+
+local QuantomLib = {}
+QuantomLib.__index = QuantomLib
+QuantomLib._version = "1.0.0"
+QuantomLib._author = "quantom.gg"
+
+local Theme = {
+    bg = Color3.fromRGB(15, 17, 22),
+    titlebar = Color3.fromRGB(20, 22, 28),
+    tab_bg = Color3.fromRGB(18, 20, 26),
+    tab_active = Color3.fromRGB(25, 28, 36),
+    tab_text = Color3.fromRGB(120, 125, 135),
+    tab_text_active = Color3.fromRGB(75, 220, 200),
+    section_bg = Color3.fromRGB(22, 25, 32),
+    section_border = Color3.fromRGB(35, 38, 48),
+    section_title = Color3.fromRGB(200, 205, 215),
+    accent = Color3.fromRGB(75, 220, 200),
+    accent_dark = Color3.fromRGB(45, 140, 130),
+    text = Color3.fromRGB(180, 185, 195),
+    text_dim = Color3.fromRGB(100, 105, 115),
+    toggle_off = Color3.fromRGB(40, 44, 55),
+    toggle_on = Color3.fromRGB(75, 220, 200),
+    slider_bg = Color3.fromRGB(35, 38, 48),
+    slider_fill = Color3.fromRGB(75, 220, 200),
+    dropdown_bg = Color3.fromRGB(28, 31, 40),
+    dropdown_item = Color3.fromRGB(32, 35, 44),
+    dropdown_hover = Color3.fromRGB(38, 42, 52),
+    keybind_bg = Color3.fromRGB(35, 38, 48),
+    separator = Color3.fromRGB(35, 38, 48),
+    shadow = Color3.fromRGB(5, 5, 8),
+}
+
+local _drawings = {}
+local _windows = {}
+local _activeDropdown = nil
+local _listeningKeybind = nil
+local _zBase = 0
+
+local function _draw(cls, props)
+    local obj = Drawing.new(cls)
+    for k, v in props do obj[k] = v end
+    _drawings[#_drawings + 1] = obj
+    return obj
+end
+
+local function _v2(x, y) return Vector2.new(x, y) end
+local function _v3(r, g, b) return Vector3.new(r, g, b) end
+local function _clamp(v, mn, mx) return math.max(mn, math.min(mx, v)) end
+local function _hit(mx, my, x, y, w, h) return mx >= x and mx <= x + w and my >= y and my <= y + h end
+
+local _mouse = {x = 0, y = 0, clicked = false, pressed = false, was = false}
+
+local function _updateMouse()
+    local p = UIS:GetMouseLocation()
+    _mouse.x, _mouse.y = p.X, p.Y
+    _mouse.was = _mouse.pressed
+    _mouse.pressed = isleftpressed()
+    _mouse.clicked = _mouse.pressed and not _mouse.was
+end
+
+function QuantomLib.new(cfg)
+    local self = setmetatable({}, QuantomLib)
+    self.title = cfg.title or "Quantom.gg"
+    self.x = cfg.x or 100
+    self.y = cfg.y or 100
+    self.width = cfg.width or 620
+    self.height = cfg.height or 420
+    self.visible = true
+    self.tabs = {}
+    self.activeTab = nil
+    self.dragging = false
+    self.dragOX = 0
+    self.dragOY = 0
+
+    local W, H = self.width, self.height
+    local z = _zBase
+    _zBase = _zBase + 100
+
+    self._shadow = _draw("Square", {Visible=false, Filled=true, Color=Theme.shadow, Opacity=0.5, Rounding=6, Position=_v2(0,0), Size=_v2(W+4,H+4), ZIndex=z})
+    self._bg = _draw("Square", {Visible=false, Filled=true, Color=Theme.bg, Opacity=0.98, Rounding=4, Position=_v2(0,0), Size=_v2(W,H), ZIndex=z+1})
+    self._border = _draw("Square", {Visible=false, Filled=false, Color=Theme.section_border, Opacity=0.4, Thickness=1, Rounding=4, Position=_v2(0,0), Size=_v2(W,H), ZIndex=z+2})
+    self._titlebar = _draw("Square", {Visible=false, Filled=true, Color=Theme.titlebar, Opacity=1, Rounding=0, Position=_v2(0,0), Size=_v2(W,30), ZIndex=z+3})
+    self._titleround = _draw("Square", {Visible=false, Filled=true, Color=Theme.titlebar, Opacity=1, Rounding=4, Position=_v2(0,0), Size=_v2(W,20), ZIndex=z+3})
+    self._title = _draw("Text", {Visible=false, Color=Theme.accent, Opacity=1, Size=14, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=self.title, ZIndex=z+5})
+    self._accent = _draw("Square", {Visible=false, Filled=true, Color=Theme.accent, Opacity=0.8, Position=_v2(0,0), Size=_v2(W,1), ZIndex=z+6})
+    self._tabbar = _draw("Square", {Visible=false, Filled=true, Color=Theme.tab_bg, Opacity=1, Position=_v2(0,0), Size=_v2(W,28), ZIndex=z+3})
+
+    _windows[#_windows + 1] = self
+    return self
+end
+
+function QuantomLib:Tab(name)
+    local tab = {name = name, window = self, sections = {}, index = #self.tabs + 1}
+    local z = _zBase + tab.index * 5
+    tab._bg = _draw("Square", {Visible=false, Filled=true, Color=Theme.tab_bg, Opacity=0, Rounding=0, Position=_v2(0,0), Size=_v2(0,28), ZIndex=z})
+    tab._text = _draw("Text", {Visible=false, Color=Theme.tab_text, Opacity=1, Size=13, Center=true, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=name, ZIndex=z+1})
+    tab._line = _draw("Square", {Visible=false, Filled=true, Color=Theme.accent, Opacity=0, Position=_v2(0,0), Size=_v2(0,2), ZIndex=z+2})
+    self.tabs[#self.tabs + 1] = tab
+    if not self.activeTab then self.activeTab = tab end
+
+    function tab:Section(cfg)
+        local sec = {name = cfg.name or "", side = cfg.side or "left", tab = tab, elements = {}}
+        local sz = _zBase + 50 + #tab.sections * 10
+        sec._bg = _draw("Square", {Visible=false, Filled=true, Color=Theme.section_bg, Opacity=0.95, Rounding=4, Position=_v2(0,0), Size=_v2(0,0), ZIndex=sz})
+        sec._border = _draw("Square", {Visible=false, Filled=false, Color=Theme.section_border, Opacity=0.4, Thickness=1, Rounding=4, Position=_v2(0,0), Size=_v2(0,0), ZIndex=sz+1})
+        sec._title = _draw("Text", {Visible=false, Color=Theme.section_title, Opacity=1, Size=13, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=sec.name, ZIndex=sz+2})
+        tab.sections[#tab.sections + 1] = sec
+
+        function sec:Toggle(c)
+            local el = {type="toggle", name=c.name or "", value=c.default or false, callback=c.callback or function()end, keybind=c.keybind or "Unbound"}
+            local ez = sz + 3 + #sec.elements * 5
+            el._box = _draw("Square", {Visible=false, Filled=true, Color=Theme.toggle_off, Opacity=1, Rounding=3, Position=_v2(0,0), Size=_v2(10,10), ZIndex=ez})
+            el._check = _draw("Square", {Visible=false, Filled=true, Color=Theme.section_bg, Opacity=0, Rounding=2, Position=_v2(0,0), Size=_v2(6,6), ZIndex=ez+1})
+            el._text = _draw("Text", {Visible=false, Color=Theme.text, Opacity=1, Size=12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.name, ZIndex=ez+1})
+            el._kb = _draw("Text", {Visible=false, Color=Theme.text_dim, Opacity=0.7, Size=11, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.keybind, ZIndex=ez+1})
+            sec.elements[#sec.elements + 1] = el
+            return el
+        end
+
+        function sec:Slider(c)
+            local el = {type="slider", name=c.name or "", min=c.min or 0, max=c.max or 100, value=c.default or 0, decimals=c.decimals or 2, callback=c.callback or function()end, sliding=false}
+            local ez = sz + 3 + #sec.elements * 5
+            el._text = _draw("Text", {Visible=false, Color=Theme.text, Opacity=1, Size=12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.name, ZIndex=ez+1})
+            el._val = _draw("Text", {Visible=false, Color=Theme.accent, Opacity=1, Size=12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text="0", ZIndex=ez+1})
+            el._bg = _draw("Square", {Visible=false, Filled=true, Color=Theme.slider_bg, Opacity=1, Rounding=3, Position=_v2(0,0), Size=_v2(0,6), ZIndex=ez})
+            el._fill = _draw("Square", {Visible=false, Filled=true, Color=Theme.slider_fill, Opacity=1, Rounding=3, Position=_v2(0,0), Size=_v2(0,6), ZIndex=ez+1})
+            sec.elements[#sec.elements + 1] = el
+            return el
+        end
+
+        function sec:Dropdown(c)
+            local el = {type="dropdown", name=c.name or "", options=c.options or {}, value=c.default or c.options[1] or "None", callback=c.callback or function()end, open=false}
+            local ez = sz + 3 + #sec.elements * 5
+            el._label = _draw("Text", {Visible=false, Color=Theme.text_dim, Opacity=1, Size=11, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.name, ZIndex=ez})
+            el._bg = _draw("Square", {Visible=false, Filled=true, Color=Theme.dropdown_bg, Opacity=1, Rounding=3, Position=_v2(0,0), Size=_v2(0,22), ZIndex=ez+1})
+            el._border = _draw("Square", {Visible=false, Filled=false, Color=Theme.section_border, Opacity=0.5, Thickness=1, Rounding=3, Position=_v2(0,0), Size=_v2(0,22), ZIndex=ez+2})
+            el._val = _draw("Text", {Visible=false, Color=Theme.text, Opacity=1, Size=12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.value, ZIndex=ez+3})
+            el._arrow = _draw("Text", {Visible=false, Color=Theme.text_dim, Opacity=0.7, Size=12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text="v", ZIndex=ez+3})
+            el._opts = {}
+            for i, opt in el.options do
+                local o = {}
+                o._bg = _draw("Square", {Visible=false, Filled=true, Color=Theme.dropdown_item, Opacity=1, Rounding=0, Position=_v2(0,0), Size=_v2(0,22), ZIndex=200+i})
+                o._text = _draw("Text", {Visible=false, Color=Theme.text, Opacity=1, Size=12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=opt, ZIndex=201+i})
+                el._opts[i] = o
+            end
+            sec.elements[#sec.elements + 1] = el
+            return el
+        end
+
+        function sec:Keybind(c)
+            local el = {type="keybind", name=c.name or "", value=c.default or "Unbound", callback=c.callback or function()end, listening=false}
+            local ez = sz + 3 + #sec.elements * 5
+            el._text = _draw("Text", {Visible=false, Color=Theme.text, Opacity=1, Size=12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.name, ZIndex=ez+1})
+            el._bg = _draw("Square", {Visible=false, Filled=true, Color=Theme.keybind_bg, Opacity=1, Rounding=3, Position=_v2(0,0), Size=_v2(60,18), ZIndex=ez})
+            el._val = _draw("Text", {Visible=false, Color=Theme.text_dim, Opacity=1, Size=11, Center=true, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.value, ZIndex=ez+1})
+            sec.elements[#sec.elements + 1] = el
+            return el
+        end
+
+        function sec:Separator()
+            local el = {type="separator"}
+            local ez = sz + 3 + #sec.elements * 5
+            el._line = _draw("Square", {Visible=false, Filled=true, Color=Theme.separator, Opacity=0.5, Position=_v2(0,0), Size=_v2(0,1), ZIndex=ez})
+            sec.elements[#sec.elements + 1] = el
+            return el
+        end
+
+        function sec:Label(c)
+            local el = {type="label", text=c.text or ""}
+            local ez = sz + 3 + #sec.elements * 5
+            el._text = _draw("Text", {Visible=false, Color=c.color or Theme.text_dim, Opacity=1, Size=c.size or 12, Center=false, Outline=true, OutlineColor=_v3(0,0,0), Position=_v2(0,0), Text=el.text, ZIndex=ez+1})
+            sec.elements[#sec.elements + 1] = el
+            return el
+        end
+
+        return sec
+    end
+
+    return tab
+end
+
+function QuantomLib:SetTheme(overrides)
+    for k, v in overrides do Theme[k] = v end
+end
+
+function QuantomLib:Toggle()
+    self.visible = not self.visible
+end
+
+function QuantomLib:Destroy()
+    for _, obj in _drawings do pcall(function() obj:Remove() end) end
+    _drawings = {}
+    _windows = {}
+end
+
+local function _render(win)
+    _updateMouse()
+    local mx, my = _mouse.x, _mouse.y
+    local x, y, W, H = win.x, win.y, win.width, win.height
+    local vis = win.visible
+
+    local key = getpressedkey()
+    if key and #key > 0 and _listeningKeybind then
+        if key == "Escape" then _listeningKeybind.value = "Unbound" else _listeningKeybind.value = key end
+        _listeningKeybind.listening = false
+        pcall(_listeningKeybind.callback, _listeningKeybind.value)
+        _listeningKeybind = nil
+    end
+
+    if _mouse.clicked and not win.dragging and vis and _hit(mx, my, x, y, W, 30) then
+        win.dragging = true
+        win.dragOX = mx - x
+        win.dragOY = my - y
+    end
+    if not _mouse.pressed then win.dragging = false end
+    if win.dragging then win.x, win.y, x, y = mx - win.dragOX, my - win.dragOY, mx - win.dragOX, my - win.dragOY end
+
+    win._shadow.Position, win._shadow.Size, win._shadow.Visible = _v2(x-2,y-2), _v2(W+4,H+4), vis
+    win._bg.Position, win._bg.Size, win._bg.Visible = _v2(x,y), _v2(W,H), vis
+    win._border.Position, win._border.Size, win._border.Visible = _v2(x,y), _v2(W,H), vis
+    win._titleround.Position, win._titleround.Size, win._titleround.Visible = _v2(x,y), _v2(W,20), vis
+    win._titlebar.Position, win._titlebar.Size, win._titlebar.Visible = _v2(x,y+4), _v2(W,26), vis
+    win._title.Position, win._title.Visible = _v2(x+10,y+8), vis
+    win._accent.Position, win._accent.Size, win._accent.Visible = _v2(x,y+30), _v2(W,1), vis
+    win._tabbar.Position, win._tabbar.Size, win._tabbar.Visible = _v2(x,y+31), _v2(W,28), vis
+
+    local tW = math.floor(W / math.max(#win.tabs, 1))
+    for i, tab in win.tabs do
+        local tx = x + (i-1) * tW
+        local act = tab == win.activeTab
+        if _mouse.clicked and vis and _hit(mx, my, tx, y+31, tW, 28) then
+            if _activeDropdown then _activeDropdown.open = false; _activeDropdown = nil end
+            win.activeTab = tab; act = true
+        end
+        tab._bg.Position, tab._bg.Size, tab._bg.Color, tab._bg.Opacity, tab._bg.Visible = _v2(tx,y+31), _v2(tW,28), act and Theme.tab_active or Theme.tab_bg, act and 1 or 0, vis
+        tab._text.Position, tab._text.Color, tab._text.Visible = _v2(tx+tW/2,y+38), act and Theme.tab_text_active or Theme.tab_text, vis
+        tab._line.Position, tab._line.Size, tab._line.Opacity, tab._line.Visible = _v2(tx+4,y+57), _v2(tW-8,2), act and 1 or 0, vis
+
+        local on = act and vis
+        local cX, cY, cW = x+8, y+63, W-16
+        local hW = math.floor(cW/2) - 4
+        local lY, rY = cY, cY
+
+        for _, sec in tab.sections do
+            local isL = sec.side == "left"
+            local sX = isL and cX or (cX + hW + 8)
+            local sY = isL and lY or rY
+            local sW = hW
+            local iY = 24
+            for _, el in sec.elements do
+                if el.type == "toggle" then iY = iY + 22
+                elseif el.type == "slider" then iY = iY + 36
+                elseif el.type == "dropdown" then iY = iY + 40
+                elseif el.type == "keybind" then iY = iY + 22
+                elseif el.type == "separator" then iY = iY + 10
+                elseif el.type == "label" then iY = iY + 18 end
+            end
+            local sH = iY + 6
+
+            sec._bg.Position, sec._bg.Size, sec._bg.Visible = _v2(sX,sY), _v2(sW,sH), on
+            sec._border.Position, sec._border.Size, sec._border.Visible = _v2(sX,sY), _v2(sW,sH), on
+            sec._title.Position, sec._title.Visible = _v2(sX+8,sY+5), on
+
+            local eY, eX, eW = sY + 24, sX + 8, sW - 16
+
+            for _, el in sec.elements do
+                if el.type == "toggle" then
+                    local bx, by = eX, eY + 3
+                    el._box.Position, el._box.Size, el._box.Color, el._box.Visible = _v2(bx,by), _v2(10,10), el.value and Theme.toggle_on or Theme.toggle_off, on
+                    el._check.Position, el._check.Size, el._check.Opacity, el._check.Visible = _v2(bx+2,by+2), _v2(6,6), el.value and 1 or 0, on
+                    el._text.Position, el._text.Visible = _v2(bx+16, eY+1), on
+                    el._kb.Position, el._kb.Text, el._kb.Visible = _v2(eX+eW-50, eY+2), el.keybind, on
+                    if _mouse.clicked and on and _hit(mx, my, bx, by, eW, 16) then el.value = not el.value; pcall(el.callback, el.value) end
+                    eY = eY + 22
+                elseif el.type == "slider" then
+                    el._text.Position, el._text.Visible = _v2(eX, eY), on
+                    local vs = string.format("%."..el.decimals.."f", el.value)
+                    el._val.Position, el._val.Text, el._val.Visible = _v2(eX+eW-#vs*7, eY), vs, on
+                    local slY = eY + 18
+                    el._bg.Position, el._bg.Size, el._bg.Visible = _v2(eX, slY), _v2(eW, 6), on
+                    local pct = (el.value - el.min) / math.max(el.max - el.min, 0.001)
+                    el._fill.Position, el._fill.Size, el._fill.Visible = _v2(eX, slY), _v2(math.max(1, eW*pct), 6), on
+                    if on then
+                        if _mouse.clicked and _hit(mx, my, eX, slY-2, eW, 10) then el.sliding = true end
+                        if el.sliding then
+                            if _mouse.pressed then
+                                local p = _clamp((mx-eX)/eW, 0, 1)
+                                local raw = el.min + p * (el.max - el.min)
+                                local m = 10 ^ el.decimals
+                                el.value = math.floor(raw * m + 0.5) / m
+                                pcall(el.callback, el.value)
+                            else el.sliding = false end
+                        end
+                    end
+                    eY = eY + 36
+                elseif el.type == "dropdown" then
+                    el._label.Position, el._label.Text, el._label.Visible = _v2(eX, eY), el.name, on
+                    local ddY = eY + 16
+                    el._bg.Position, el._bg.Size, el._bg.Visible = _v2(eX, ddY), _v2(eW, 22), on
+                    el._border.Position, el._border.Size, el._border.Visible = _v2(eX, ddY), _v2(eW, 22), on
+                    el._val.Position, el._val.Text, el._val.Visible = _v2(eX+6, ddY+4), el.value, on
+                    el._arrow.Position, el._arrow.Text, el._arrow.Visible = _v2(eX+eW-14, ddY+4), el.open and "^" or "v", on
+                    if _mouse.clicked and on and _hit(mx, my, eX, ddY, eW, 22) then
+                        if _activeDropdown and _activeDropdown ~= el then _activeDropdown.open = false end
+                        el.open = not el.open
+                        _activeDropdown = el.open and el or nil
+                    end
+                    for oi, o in el._opts do
+                        local oY = ddY + 22 + (oi-1)*22
+                        local sv = on and el.open
+                        o._bg.Position, o._bg.Size, o._bg.Visible = _v2(eX, oY), _v2(eW, 22), sv
+                        if sv and _hit(mx, my, eX, oY, eW, 22) then
+                            o._bg.Color = Theme.dropdown_hover
+                            if _mouse.clicked then el.value = el.options[oi]; el.open = false; _activeDropdown = nil; pcall(el.callback, el.value) end
+                        else o._bg.Color = el.options[oi] == el.value and Theme.dropdown_hover or Theme.dropdown_item end
+                        o._text.Position, o._text.Color, o._text.Visible = _v2(eX+6, oY+4), el.options[oi] == el.value and Theme.accent or Theme.text, sv
+                    end
+                    eY = eY + 40
+                elseif el.type == "keybind" then
+                    el._text.Position, el._text.Visible = _v2(eX, eY+1), on
+                    local kW = 60
+                    el._bg.Position, el._bg.Size, el._bg.Visible = _v2(eX+eW-kW, eY), _v2(kW, 18), on
+                    el._val.Position, el._val.Text, el._val.Color, el._val.Visible = _v2(eX+eW-kW/2, eY+2), el.listening and "..." or el.value, el.listening and Theme.accent or Theme.text_dim, on
+                    if _mouse.clicked and on and _hit(mx, my, eX+eW-kW, eY, kW, 18) then el.listening = true; _listeningKeybind = el end
+                    eY = eY + 22
+                elseif el.type == "separator" then
+                    el._line.Position, el._line.Size, el._line.Visible = _v2(eX, eY+4), _v2(eW, 1), on
+                    eY = eY + 10
+                elseif el.type == "label" then
+                    el._text.Position, el._text.Visible = _v2(eX, eY), on
+                    eY = eY + 18
+                end
+            end
+            if isL then lY = lY + sH + 6 else rY = rY + sH + 6 end
+        end
+    end
+end
+
+RunService.Render:Connect(function()
+    for _, w in _windows do _render(w) end
+end)
+
+return QuantomLib
