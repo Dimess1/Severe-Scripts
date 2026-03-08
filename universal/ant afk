@@ -1,0 +1,8 @@
+task.spawn(function()
+    while true do
+        keypress(0x57)
+        task.wait(0.1)
+        keyrelease(0x57)
+        task.wait(60)
+    end
+end)
