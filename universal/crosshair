@@ -1,0 +1,133 @@
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+
+local STYLE = "cross"
+local SIZE = 8
+local GAP = 4
+local THICKNESS = 1.5
+local COLOR = Color3.fromRGB(75, 220, 200)
+local OPACITY = 1
+local OUTLINE = true
+local OUTLINE_COLOR = Color3.fromRGB(0, 0, 0)
+local DOT = true
+local DOT_SIZE = 2
+
+--[[
+  ESTILOS:
+    "cross"    - cruz classica (+)
+    "circle"   - circulo
+    "dot"      - so o ponto central
+    "diamond"  - losango
+    "arrows"   - setas apontando pro centro
+    "t"        - formato T (sem linha de cima)
+]]
+
+local lines = {}
+local outlines = {}
+
+local function cr(cls, props)
+    local obj = Drawing.new(cls)
+    for k, v in props do obj[k] = v end
+    return obj
+end
+
+for i = 1, 8 do
+    outlines[i] = cr("Line", {Visible=false, Color=OUTLINE_COLOR, Opacity=OPACITY, Thickness=THICKNESS+2, ZIndex=9})
+    lines[i] = cr("Line", {Visible=false, Color=COLOR, Opacity=OPACITY, Thickness=THICKNESS, ZIndex=10})
+end
+
+local dotDraw = cr("Circle", {Visible=false, Filled=true, Color=COLOR, Opacity=OPACITY, Radius=DOT_SIZE, NumSides=16, ZIndex=11})
+local dotOutline = cr("Circle", {Visible=false, Filled=true, Color=OUTLINE_COLOR, Opacity=OPACITY, Radius=DOT_SIZE+1, NumSides=16, ZIndex=10})
+
+local circleDraw = cr("Circle", {Visible=false, Filled=false, Color=COLOR, Opacity=OPACITY, Thickness=THICKNESS, Radius=SIZE, NumSides=40, ZIndex=10})
+local circleOutline = cr("Circle", {Visible=false, Filled=false, Color=OUTLINE_COLOR, Opacity=OPACITY, Thickness=THICKNESS+2, Radius=SIZE, NumSides=40, ZIndex=9})
+
+local function hideAll()
+    for i = 1, 8 do
+        lines[i].Visible = false
+        outlines[i].Visible = false
+    end
+    dotDraw.Visible = false
+    dotOutline.Visible = false
+    circleDraw.Visible = false
+    circleOutline.Visible = false
+end
+
+local function setLine(idx, x1, y1, x2, y2)
+    lines[idx].From = Vector2.new(x1, y1)
+    lines[idx].To = Vector2.new(x2, y2)
+    lines[idx].Visible = true
+    if OUTLINE then
+        outlines[idx].From = Vector2.new(x1, y1)
+        outlines[idx].To = Vector2.new(x2, y2)
+        outlines[idx].Visible = true
+    end
+end
+
+RunService.Render:Connect(function()
+    local m = UIS:GetMouseLocation()
+    local mx, my = m.X, m.Y
+
+    hideAll()
+
+    if DOT then
+        dotDraw.Position = Vector2.new(mx, my)
+        dotDraw.Radius = DOT_SIZE
+        dotDraw.Color = COLOR
+        dotDraw.Visible = true
+        if OUTLINE then
+            dotOutline.Position = Vector2.new(mx, my)
+            dotOutline.Radius = DOT_SIZE + 1
+            dotOutline.Visible = true
+        end
+    end
+
+    if STYLE == "cross" then
+        setLine(1, mx, my - GAP - SIZE, mx, my - GAP)
+        setLine(2, mx, my + GAP, mx, my + GAP + SIZE)
+        setLine(3, mx - GAP - SIZE, my, mx - GAP, my)
+        setLine(4, mx + GAP, my, mx + GAP + SIZE, my)
+
+    elseif STYLE == "circle" then
+        circleDraw.Position = Vector2.new(mx, my)
+        circleDraw.Radius = SIZE
+        circleDraw.Color = COLOR
+        circleDraw.Thickness = THICKNESS
+        circleDraw.Visible = true
+        if OUTLINE then
+            circleOutline.Position = Vector2.new(mx, my)
+            circleOutline.Radius = SIZE
+            circleOutline.Thickness = THICKNESS + 2
+            circleOutline.Visible = true
+        end
+
+    elseif STYLE == "dot" then
+        dotDraw.Radius = DOT_SIZE + 1
+        dotDraw.Visible = true
+
+    elseif STYLE == "diamond" then
+        setLine(1, mx, my - GAP - SIZE, mx + GAP + SIZE, my)
+        setLine(2, mx + GAP + SIZE, my, mx, my + GAP + SIZE)
+        setLine(3, mx, my + GAP + SIZE, mx - GAP - SIZE, my)
+        setLine(4, mx - GAP - SIZE, my, mx, my - GAP - SIZE)
+
+    elseif STYLE == "arrows" then
+        local a = SIZE
+        local g = GAP
+        setLine(1, mx - g - a, my - g - a, mx - g, my - g)
+        setLine(2, mx + g + a, my - g - a, mx + g, my - g)
+        setLine(3, mx - g - a, my + g + a, mx - g, my + g)
+        setLine(4, mx + g + a, my + g + a, mx + g, my + g)
+
+    elseif STYLE == "t" then
+        setLine(1, mx, my + GAP, mx, my + GAP + SIZE)
+        setLine(2, mx - GAP - SIZE, my, mx - GAP, my)
+        setLine(3, mx + GAP, my, mx + GAP + SIZE, my)
+    end
+
+    for i = 1, 8 do
+        lines[i].Color = COLOR
+        lines[i].Thickness = THICKNESS
+        outlines[i].Thickness = THICKNESS + 2
+    end
+end)
