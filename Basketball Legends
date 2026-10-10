@@ -1,0 +1,1739 @@
+print("[BASKETBALL] START")
+
+if type(_G.__BBALL_STOP) == "function" then pcall(_G.__BBALL_STOP) end
+if type(_G.__AUTOSHOT_STOP) == "function" then pcall(_G.__AUTOSHOT_STOP) end
+
+local LIB_URL = "https://raw.githubusercontent.com/Dimess1/Severe-Scripts/refs/heads/main/library/source"
+local LIB_WANT = "2.1.0"
+
+local function fetch(url)
+    local body = ""
+    local ok, r = pcall(function() return httpget(url) end)
+    if ok and type(r) == "string" then body = r end
+    if #body < 100 then
+        ok, r = pcall(function() return game:HttpGet(url) end)
+        if ok and type(r) == "string" then body = r end
+    end
+    return body
+end
+
+local function loadLib()
+    local src = fetch(LIB_URL)
+    if #src < 100 then return nil, "download failed" end
+    _G.__QL_RET = nil
+    local lib = nil
+    local okc, fn = pcall(loadstring, "_G.__QL_RET = (function(...)\n" .. src .. "\nend)()")
+    if okc and type(fn) == "function" then pcall(fn) end
+    lib = _G.__QL_RET
+    _G.__QL_RET = nil
+    if type(lib) ~= "table" then
+        local okc2, fn2 = pcall(loadstring, src)
+        if okc2 and type(fn2) == "function" then
+            local ok2, r2 = pcall(fn2)
+            if ok2 and type(r2) == "table" then lib = r2 end
+        end
+    end
+    if type(lib) ~= "table" and type(_G.QuantomLib) == "table" then lib = _G.QuantomLib end
+    if type(lib) ~= "table" then return nil, "load failed" end
+    return lib
+end
+
+local function verNum(v)
+    local a, b, c = string.match(tostring(v or ""), "^(%d+)%.(%d+)%.?(%d*)")
+    return (tonumber(a) or 0) * 10000 + (tonumber(b) or 0) * 100 + (tonumber(c) or 0)
+end
+
+local QuantomLib, libErr = loadLib()
+if not QuantomLib then
+    print("[BASKETBALL] UI library unavailable (" .. tostring(libErr) .. "), running without menu")
+elseif verNum(QuantomLib._version) < verNum(LIB_WANT) then
+    print("[BASKETBALL] library on GitHub is v" .. tostring(QuantomLib._version) .. ", upload QuantomLib " .. LIB_WANT .. " for the new look and faster UI")
+end
+
+local FALLBACK_VK = { Space = 0x20, LeftShift = 0xA0, RightShift = 0xA1, Insert = 0x2D, Tab = 0x09 }
+for i = 0, 25 do FALLBACK_VK[string.char(65 + i)] = 0x41 + i end
+for i = 1, 12 do FALLBACK_VK["F" .. tostring(i)] = 0x6F + i end
+
+local function keyVK(name)
+    if QuantomLib and QuantomLib.KeyToVK then return QuantomLib.KeyToVK(name) end
+    return FALLBACK_VK[name]
+end
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+
+local player = nil
+for i = 1, 100 do
+    local ok, p = pcall(function() return Players.LocalPlayer end)
+    if ok and p then player = p break end
+    task.wait(0.1)
+end
+if not player then print("[BASKETBALL] LocalPlayer unavailable") return end
+
+local DATA_FILE = "basketball_data.json"
+local alive = true
+local Lib, Win = nil, nil
+
+_G.__BBALL_STOP = function()
+    alive = false
+    if Lib then pcall(function() Lib:Destroy() end) end
+end
+
+local now = tick
+
+local ACCENTS = {
+    { "Teal", 75, 220, 200 }, { "Purple", 160, 110, 255 }, { "Red", 240, 80, 90 },
+    { "Orange", 255, 150, 60 }, { "Blue", 80, 150, 255 }, { "Pink", 255, 105, 180 }, { "Green", 90, 220, 110 }
+}
+local ACCENT_NAMES = {}
+for i, a in ipairs(ACCENTS) do ACCENT_NAMES[i] = a[1] end
+
+local PROFILE = {
+    [9] = 341, [10] = 342, [11] = 344, [12] = 345, [13] = 345, [14] = 345, [15] = 345, [16] = 346,
+    [17] = 349, [18] = 350, [19] = 350, [20] = 349, [21] = 348, [22] = 348, [23] = 347, [24] = 346,
+    [25] = 346, [26] = 346, [27] = 345, [28] = 346, [29] = 344, [30] = 342, [31] = 341, [32] = 340,
+    [33] = 339, [34] = 340, [35] = 340, [36] = 341, [37] = 342, [38] = 346, [39] = 345, [40] = 343,
+    [41] = 344, [42] = 344, [43] = 343, [44] = 343, [45] = 343, [46] = 344, [47] = 344, [48] = 344,
+    [49] = 345, [50] = 345, [51] = 346, [52] = 346, [53] = 346, [54] = 346, [55] = 346
+}
+local B_MIN, B_MAX = 9, 55
+local D_MIN, D_MAX = 300, 420
+
+local VALID = {
+    ["VERY EARLY"] = true, ["EARLY"] = true, ["SLIGHTLY EARLY"] = true,
+    ["GOOD"] = true, ["GREAT"] = true, ["PERFECT"] = true,
+    ["SLIGHTLY LATE"] = true, ["LATE"] = true, ["VERY LATE"] = true
+}
+local CLS = {
+    ["PERFECT"] = "P", ["GREAT"] = "N", ["GOOD"] = "N",
+    ["SLIGHTLY EARLY"] = "E", ["EARLY"] = "E", ["VERY EARLY"] = "E",
+    ["SLIGHTLY LATE"] = "L", ["LATE"] = "L", ["VERY LATE"] = "L"
+}
+local RANK = {
+    ["PERFECT"] = 1, ["GREAT"] = 2, ["GOOD"] = 3,
+    ["SLIGHTLY EARLY"] = 4, ["SLIGHTLY LATE"] = 4, ["EARLY"] = 5, ["LATE"] = 5,
+    ["VERY EARLY"] = 6, ["VERY LATE"] = 6
+}
+local GRADES = { "Perfect", "Great", "Good", "Slightly Off", "Off", "Very Off" }
+local MISS_OPTS = { "Great", "Good", "Slightly Off", "Off", "Very Off", "Random (Great/Good)", "Random (Any)" }
+local SIDE_OPTS = { "Random", "Early", "Late" }
+local GD_DEFAULT = { 0, 12, 22, 34, 50, 75 }
+local CAP_TIME, CAP_BAR = 160, 60
+
+local C = {
+    on = true, keyName = "E", mode = 0, off = 0, learn = true, comp = true, log = true,
+    wm = true, notif = true, accent = "Teal", menuKey = "Insert", toggleKey = "F8", wx = 120, wy = 120,
+    target = "Perfect", chance = 100, missGrade = "Random (Great/Good)", side = "Random",
+    jitter = 0, maxStreak = 0, minDist = 0, maxDist = 100, gradeLearn = true, pauseUi = true
+}
+local M = { g = nil, gPrior = nil, kp = 0, kr = 0, kl = 0, pavg = nil }
+local TS = {}
+local BAR = { path = nil, ch = 0, sgn = 1, lock = 0, S = {}, Pc = nil, gdt = nil, miss = 0, fine = nil }
+local GDE = { 0, 12, 22, 34, 50, 75 }
+local GDL = { 0, 12, 22, 34, 50, 75 }
+local ST = {
+    shots = 0, perfect = 0, good = 0, early = 0, late = 0, miss = 0,
+    hits = 0, attempts = 0, streak = 0, great = 0, goodOnly = 0, skipped = 0,
+    last = "-", lastD = 0, lastDelay = 0, lastPred = 0, lastMode = "-", lastTarget = "-", lastExtra = 0,
+    ping = nil, hoops = 0, step = 1 / 60, dirty = false, lastSave = 0,
+    scanT = 0, needScan = false, busy = false, bias = 8, calib = false, keyChanged = false, fine = false
+}
+local hoops = {}
+
+local function rdAbsSize(o) return o.AbsoluteSize end
+local function rdAbsPos(o) return o.AbsolutePosition end
+local function rdParent(o) return o.Parent end
+local function rdText(o) return o.Text end
+local function rdName(o) return o.Name end
+local function rdKids(o) return o:GetChildren() end
+local function rdDesc(o) return o:GetDescendants() end
+local function rdFind(o, n) return o:FindFirstChild(n) end
+local function rdPosition(o) return o.Position end
+local function rdLook(o) return o.CFrame.LookVector end
+local function rdALV(o) return o.AssemblyLinearVelocity end
+local function rdVel(o) return o.Velocity end
+local function rdIsPart(o) return o:IsA("BasePart") end
+local function rdClass(o) return o.ClassName end
+local function rdChar(p) return p.Character end
+
+pcall(function() math.randomseed(math.floor(tick() * 1000) % 2147483647) end)
+local rngState = math.floor((tick() % 1) * 2147483646) + 1
+local function rand()
+    local ok, v = pcall(math.random)
+    if ok and type(v) == "number" then return v end
+    rngState = (rngState * 16807) % 2147483647
+    return rngState / 2147483647
+end
+
+local function clamp(v, a, b)
+    if v < a then return a end
+    if v > b then return b end
+    return v
+end
+
+local function round1(v)
+    return math.floor(v * 10 + 0.5) / 10
+end
+
+local function num(v, d)
+    if type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge then return v end
+    return d
+end
+
+local function keyDown(vk)
+    if not vk then return false end
+    local ok, v = pcall(iskeypressed, vk)
+    return ok and v == true
+end
+
+local function robloxActive()
+    local ok, v = pcall(isrbxactive)
+    if ok and v == false then return false end
+    return true
+end
+
+local function hdist(a, b)
+    local dx, dz = a.X - b.X, a.Z - b.Z
+    return math.sqrt(dx * dx + dz * dz)
+end
+
+local function pushSample(list, x, c, cap, d)
+    list[#list + 1] = { x = x, c = c, d = d }
+    while #list > cap do table.remove(list, 1) end
+end
+
+local function sigm(z)
+    if z > 30 then return 1 end
+    if z < -30 then return 0 end
+    return 1 / (1 + math.exp(-z))
+end
+
+local function edgeLL(ins, outs, upper, scale, e, wi, wo)
+    local s = 0
+    for i = 1, #ins do
+        local z = upper and (ins[i] - e) / scale or (e - ins[i]) / scale
+        s = s + (wi and wi[i] or 1) * math.log(math.max(1 - sigm(z), 1e-9))
+    end
+    for i = 1, #outs do
+        local z = upper and (outs[i] - e) / scale or (e - outs[i]) / scale
+        s = s + (wo and wo[i] or 1) * math.log(math.max(sigm(z), 1e-9))
+    end
+    return s
+end
+
+local function fitEdge(ins, outs, upper, scale, wi, wo)
+    if #outs == 0 or #ins == 0 then return nil end
+    local lo, hi = math.huge, -math.huge
+    for _, x in ipairs(ins) do
+        if x < lo then lo = x end
+        if x > hi then hi = x end
+    end
+    for _, x in ipairs(outs) do
+        if x < lo then lo = x end
+        if x > hi then hi = x end
+    end
+    lo, hi = lo - scale * 2, hi + scale * 2
+    local best, bestLL = lo, -math.huge
+    for i = 0, 32 do
+        local e = lo + (hi - lo) * i / 32
+        local v = edgeLL(ins, outs, upper, scale, e, wi, wo)
+        if v > bestLL then bestLL, best = v, e end
+    end
+    local w = (hi - lo) / 32
+    for i = -8, 8 do
+        local e = best + w * i / 8
+        local v = edgeLL(ins, outs, upper, scale, e, wi, wo)
+        if v > bestLL then bestLL, best = v, e end
+    end
+    return best
+end
+
+local function wquant(xs, ws, q)
+    local idx = {}
+    for i = 1, #xs do idx[i] = i end
+    table.sort(idx, function(p, r) return xs[p] < xs[r] end)
+    local tot = 0
+    for i = 1, #ws do tot = tot + ws[i] end
+    local acc = 0
+    for _, i in ipairs(idx) do
+        acc = acc + ws[i]
+        if acc >= tot * q then return xs[i] end
+    end
+    return xs[idx[#idx]]
+end
+
+local function bracket(list, safe, scale, d0, sig)
+    local ins, wi = {}, {}
+    local pool = {}
+    local wsum = 0
+    for _, s in ipairs(list) do
+        local w = 1
+        if d0 and s.d then
+            local dd = s.d - d0
+            w = math.exp(-(dd * dd) / (2 * sig * sig))
+        end
+        if w >= 0.05 then
+            pool[#pool + 1] = { x = s.x, c = s.c, w = w }
+            wsum = wsum + w
+            if s.c == "P" then
+                ins[#ins + 1] = s.x
+                wi[#wi + 1] = w
+            end
+        end
+    end
+    local np = #ins
+    local med, p10, p90 = nil, nil, nil
+    if np > 0 then
+        med = wquant(ins, wi, 0.5)
+        p10 = wquant(ins, wi, 0.1)
+        p90 = wquant(ins, wi, 0.9)
+    end
+    local lows, lw, ups, uw = {}, {}, {}, {}
+    local eMax, lMin = nil, nil
+    for _, s in ipairs(pool) do
+        local c = s.c
+        if c == "N" then
+            if med then c = (s.x < med) and "E" or "L" else c = nil end
+        end
+        if c == "E" then
+            lows[#lows + 1] = s.x
+            lw[#lw + 1] = s.w
+            if eMax == nil or s.x > eMax then eMax = s.x end
+        elseif c == "L" then
+            ups[#ups + 1] = s.x
+            uw[#uw + 1] = s.w
+            if lMin == nil or s.x < lMin then lMin = s.x end
+        end
+    end
+    if np == 0 then
+        if eMax and lMin and lMin > eMax then return (eMax + lMin) / 2, 0, 0, eMax, lMin, nil, nil, wsum end
+        return nil, 0, 0, eMax, lMin, nil, nil, wsum
+    end
+    local L = fitEdge(ins, lows, false, scale, wi, lw)
+    local U = fitEdge(ins, ups, true, scale, wi, uw)
+    local c
+    if L and U and U > L then
+        c = (L + U) / 2
+    elseif U then
+        c = math.min((p10 + U) / 2, U - safe)
+    elseif L then
+        c = math.max((L + p90) / 2, L + safe)
+    else
+        c = med
+    end
+    return c, np, p90 - p10, eMax, lMin, p10, p90, wsum
+end
+
+local function encSamples(list)
+    local out = {}
+    for i, s in ipairs(list) do out[i] = { s.x, s.c, s.d or -1 } end
+    return out
+end
+
+local function decSamples(raw, into, cap)
+    if type(raw) ~= "table" then return end
+    for _, s in ipairs(raw) do
+        if type(s) == "table" and type(s[1]) == "number" and (s[2] == "P" or s[2] == "E" or s[2] == "L" or s[2] == "N") then
+            local dd = num(s[3], -1)
+            into[#into + 1] = { x = s[1], c = s[2], d = dd >= 0 and dd or nil }
+        end
+    end
+    while #into > cap do table.remove(into, 1) end
+end
+
+local function saveData()
+    local out = {
+        v = 4,
+        cfg = {
+            on = C.on, keyName = C.keyName, mode = C.mode, off = C.off, learn = C.learn, comp = C.comp, log = C.log,
+            wm = C.wm, notif = C.notif, accent = C.accent, menuKey = C.menuKey, toggleKey = C.toggleKey,
+            wx = Win and Win.x or C.wx, wy = Win and Win.y or C.wy,
+            target = C.target, chance = C.chance, missGrade = C.missGrade, side = C.side,
+            jitter = C.jitter, maxStreak = C.maxStreak, minDist = C.minDist, maxDist = C.maxDist,
+            gradeLearn = C.gradeLearn, pauseUi = C.pauseUi
+        },
+        grades = { e = { GDE[1], GDE[2], GDE[3], GDE[4], GDE[5], GDE[6] }, l = { GDL[1], GDL[2], GDL[3], GDL[4], GDL[5], GDL[6] } },
+        model = { g = M.g or -999, gPrior = M.gPrior or -999, kp = M.kp, kr = M.kr, kl = M.kl, pavg = M.pavg or -1, ts = encSamples(TS) },
+        bar = { path = BAR.path or {}, ch = BAR.ch, sgn = BAR.sgn, lock = BAR.lock, S = encSamples(BAR.S), Pc = BAR.Pc or -999, gdt = BAR.gdt or -1, fine = BAR.fine == true, xs = 2 },
+        stats = {
+            shots = ST.shots, perfect = ST.perfect, good = ST.good, early = ST.early, late = ST.late, miss = ST.miss,
+            hits = ST.hits, attempts = ST.attempts, great = ST.great, goodOnly = ST.goodOnly, skipped = ST.skipped
+        }
+    }
+    local ok, s = pcall(function() return HttpService:JSONEncode(out) end)
+    if ok and type(s) == "string" then pcall(writefile, DATA_FILE, s) end
+    ST.dirty = false
+    ST.lastSave = now()
+end
+
+local function inList(v, list)
+    for _, x in ipairs(list) do if x == v then return true end end
+    return false
+end
+
+local function loadData()
+    local okf, isf = pcall(isfile, DATA_FILE)
+    if okf and isf == false then return false end
+    local ok, raw = pcall(readfile, DATA_FILE)
+    if not ok or type(raw) ~= "string" or raw == "" then return false end
+    local ok2, d = pcall(function() return HttpService:JSONDecode(raw) end)
+    if not ok2 or type(d) ~= "table" then return false end
+    local ver = num(d.v, 3)
+    local c = type(d.cfg) == "table" and d.cfg or {}
+    for _, k in ipairs({ "on", "learn", "comp", "log", "wm", "notif", "gradeLearn", "pauseUi" }) do
+        if type(c[k]) == "boolean" then C[k] = c[k] end
+    end
+    for _, k in ipairs({ "keyName", "accent", "menuKey", "toggleKey" }) do
+        if type(c[k]) == "string" and c[k] ~= "" then C[k] = c[k] end
+    end
+    if inList(c.target, GRADES) then C.target = c.target end
+    if inList(c.missGrade, MISS_OPTS) then C.missGrade = c.missGrade end
+    if inList(c.side, SIDE_OPTS) then C.side = c.side end
+    C.wx = num(c.wx, C.wx)
+    C.wy = num(c.wy, C.wy)
+    C.mode = clamp(math.floor(num(c.mode, C.mode)), 0, 1)
+    C.off = clamp(math.floor(num(c.off, C.off)), -30, 30)
+    C.chance = clamp(math.floor(num(c.chance, C.chance)), 0, 100)
+    C.jitter = clamp(math.floor(num(c.jitter, C.jitter)), 0, 30)
+    C.maxStreak = clamp(math.floor(num(c.maxStreak, C.maxStreak)), 0, 30)
+    C.minDist = clamp(math.floor(num(c.minDist, C.minDist)), 0, 100)
+    C.maxDist = clamp(math.floor(num(c.maxDist, C.maxDist)), 0, 100)
+    if type(d.grades) == "table" and type(d.grades.e) == "table" and type(d.grades.l) == "table" then
+        for i = 2, 6 do
+            GDE[i] = clamp(num(d.grades.e[i], GDE[i]), 2, 150)
+            GDL[i] = clamp(num(d.grades.l[i], GDL[i]), 2, 150)
+        end
+    end
+    local m = type(d.model) == "table" and d.model or {}
+    M.kp = clamp(num(m.kp, 0), -15, 15)
+    M.kr = clamp(num(m.kr, 0), -15, 15)
+    M.kl = clamp(num(m.kl, 0), -15, 15)
+    local pa = num(m.pavg, -1)
+    if pa >= 0 then M.pavg = pa end
+    if ver >= 4 then
+        local g = num(m.g, -999)
+        if g > -900 then M.g = g end
+        local gp = num(m.gPrior, -999)
+        if gp > -900 then M.gPrior = gp end
+        decSamples(m.ts, TS, CAP_TIME)
+    else
+        M.gPrior = num(m.g, 0)
+    end
+    local br = type(d.bar) == "table" and d.bar or {}
+    if type(br.path) == "table" and #br.path > 0 then
+        local p = {}
+        for i, s in ipairs(br.path) do p[i] = tostring(s) end
+        BAR.path = p
+        BAR.ch = clamp(math.floor(num(br.ch, 0)), 0, 4)
+        BAR.sgn = num(br.sgn, 1) < 0 and -1 or 1
+        BAR.lock = clamp(math.floor(num(br.lock, 0)), 0, 5)
+        if ver >= 4 and num(br.xs, 0) == 2 then
+            decSamples(br.S, BAR.S, CAP_BAR)
+            local pc = num(br.Pc, -999)
+            if pc > -900 then BAR.Pc = pc end
+            local dt = num(br.gdt, -1)
+            if dt > 0 then BAR.gdt = dt end
+            if type(br.fine) == "boolean" then BAR.fine = br.fine end
+        end
+        if BAR.ch == 0 then BAR.path = nil BAR.lock = 0 end
+    end
+    local s = type(d.stats) == "table" and d.stats or {}
+    for _, k in ipairs({ "shots", "perfect", "good", "early", "late", "miss", "hits", "attempts", "great", "goodOnly", "skipped" }) do
+        ST[k] = math.max(0, math.floor(num(s[k], 0)))
+    end
+    return true
+end
+
+local function resetBar()
+    BAR.path, BAR.ch, BAR.sgn, BAR.lock = nil, 0, 1, 0
+    BAR.S, BAR.Pc, BAR.gdt, BAR.miss, BAR.fine = {}, nil, nil, 0, nil
+end
+
+local function resetLearning()
+    M.g, M.gPrior, M.kp, M.kr, M.kl = nil, nil, 0, 0, 0
+    TS = {}
+    ST.tsVer = (ST.tsVer or 0) + 1
+    for i = 1, 6 do
+        GDE[i] = GD_DEFAULT[i]
+        GDL[i] = GD_DEFAULT[i]
+    end
+    resetBar()
+    ST.dirty = true
+end
+
+local function resetStats()
+    for _, k in ipairs({ "shots", "perfect", "good", "early", "late", "miss", "hits", "attempts", "great", "goodOnly", "skipped", "streak" }) do
+        ST[k] = 0
+    end
+    ST.dirty = true
+end
+
+local function getRoot()
+    local ok, char = pcall(rdChar, player)
+    if not ok or not char then return nil end
+    local ok2, r = pcall(rdFind, char, "HumanoidRootPart")
+    if ok2 and r then return r end
+    local ok3, t = pcall(rdFind, char, "Torso")
+    if ok3 then return t end
+    return nil
+end
+
+local function getVelocity(root)
+    local ok, v = pcall(rdALV, root)
+    if ok and v then return v end
+    local ok2, v2 = pcall(rdVel, root)
+    if ok2 and v2 then return v2 end
+    return nil
+end
+
+local function isPart(obj)
+    local ok, r = pcall(rdIsPart, obj)
+    if ok then return r == true end
+    local ok2, cn = pcall(rdClass, obj)
+    return ok2 and (cn == "Part" or cn == "MeshPart" or cn == "UnionOperation" or cn == "WedgePart")
+end
+
+local function scanHoops()
+    local root = Workspace
+    local okg, g = pcall(rdFind, Workspace, "Game")
+    if okg and g then
+        local okc, c = pcall(rdFind, g, "Courts")
+        if okc and c then root = c end
+    end
+    local ok, list = pcall(rdDesc, root)
+    ST.scanT = now()
+    ST.needScan = false
+    if not ok or type(list) ~= "table" then return end
+    local found = {}
+    for i, obj in ipairs(list) do
+        if i % 3000 == 0 then
+            task.wait()
+            if not alive then return end
+        end
+        local okn, nm = pcall(rdName, obj)
+        if okn and nm then
+            nm = string.lower(tostring(nm))
+            if (string.find(nm, "rim", 1, true) or string.find(nm, "hoop", 1, true)) and isPart(obj) then
+                local okp, pos = pcall(rdPosition, obj)
+                if okp and pos then
+                    local dup = false
+                    for _, e in ipairs(found) do
+                        if hdist(pos, e) < 6 then dup = true break end
+                    end
+                    if not dup then found[#found + 1] = pos end
+                end
+            end
+        end
+    end
+    if #found > 0 or #hoops == 0 then
+        hoops = found
+        ST.hoops = #found
+    end
+end
+
+local function getTarget(root)
+    if #hoops == 0 then
+        scanHoops()
+        if #hoops == 0 then return nil end
+    end
+    local okp, rp = pcall(rdPosition, root)
+    if not okp or not rp then return nil end
+    local okl, look = pcall(rdLook, root)
+    if not okl then look = nil end
+    local nearest, nearD = nil, math.huge
+    local best, bestS, bestDot = nil, math.huge, nil
+    for _, h in ipairs(hoops) do
+        local dx, dz = h.X - rp.X, h.Z - rp.Z
+        local d = math.sqrt(dx * dx + dz * dz)
+        if d < nearD then nearest, nearD = h, d end
+        if look and d > 0.01 then
+            local dot = look.X * (dx / d) + look.Z * (dz / d)
+            if dot > 0.10 then
+                local s = d + (1 - dot) * 12
+                if s < bestS then best, bestS, bestDot = h, s, dot end
+            end
+        end
+    end
+    if nearD > 150 then ST.needScan = true end
+    if best then return best, hdist(rp, best), bestDot, rp end
+    return nearest, nearD, nil, rp
+end
+
+local function getMovement(root, hoop, rp)
+    local v = getVelocity(root)
+    if not v then return { speed = 0, radial = 0, lateral = 0, yvel = 0 } end
+    local dx, dz = hoop.X - rp.X, hoop.Z - rp.Z
+    local d = math.sqrt(dx * dx + dz * dz)
+    if d < 0.01 then return { speed = 0, radial = 0, lateral = 0, yvel = round1(v.Y) } end
+    local ux, uz = dx / d, dz / d
+    return {
+        speed = round1(math.sqrt(v.X * v.X + v.Z * v.Z)),
+        radial = round1(v.X * ux + v.Z * uz),
+        lateral = round1(v.X * -uz + v.Z * ux),
+        yvel = round1(v.Y)
+    }
+end
+
+local function getPing()
+    local ok, v = pcall(GetPingValue)
+    if ok and v ~= nil then
+        local n = tonumber(v)
+        if n and n >= 0 and n < 5000 then return round1(n) end
+    end
+    return nil
+end
+
+local function features(mv, ping)
+    if not C.comp then return 0, 0, 0 end
+    local xp = 0
+    if ping and M.pavg then xp = clamp((ping - M.pavg) / 50, -3, 3) end
+    local xr = clamp(mv.radial / 20, -2, 2)
+    local xl = clamp(math.abs(mv.lateral) / 20, 0, 2)
+    return xp, xr, xl
+end
+
+local function bucketOf(d)
+    local x = clamp(d, B_MIN, B_MAX)
+    local a = math.floor(x)
+    if a >= B_MAX then return B_MAX, B_MAX, 0 end
+    return a, a + 1, x - a
+end
+
+local function baseTime(d, xp, xr, xl)
+    local a, b, f = bucketOf(d)
+    local base = PROFILE[a] + (PROFILE[b] - PROFILE[a]) * f
+    local comp = 0
+    if C.comp then comp = M.kp * xp + M.kr * xr + M.kl * xl end
+    return base + comp, a, b, f
+end
+
+local function timeCenter()
+    if M.g ~= nil then return M.g end
+    return ST.bias + (M.gPrior or 0)
+end
+
+local function timeSafe()
+    return (ST.fine and 1 or ST.step * 500) + 3
+end
+
+local TCC = { ver = -1, map = {} }
+
+local function timeCenterAt(d)
+    local g = timeCenter() + (ST.explore or 0)
+    if #TS == 0 then return g end
+    if TCC.ver ~= ST.tsVer then
+        TCC.ver = ST.tsVer
+        TCC.map = {}
+    end
+    local key = math.floor(d * 2 + 0.5)
+    local hit = TCC.map[key]
+    if hit then return hit end
+    local c, np, _, lb, ub, _, _, wsum = bracket(TS, timeSafe(), 4, d, 4)
+    if c == nil then
+        local res = g
+        if lb and lb > g - 6 then res = lb + 8 elseif ub and ub < g + 6 then res = ub - 8 end
+        TCC.map[key] = res
+        return res
+    end
+    local k = clamp((wsum or 0) / 6, 0, 1)
+    local res = g + (c - g) * k
+    TCC.map[key] = res
+    return res
+end
+
+local function compLearn(sh, dir)
+    if not C.comp then return end
+    local g = 3 * dir / (1 + sh.xp * sh.xp + sh.xr * sh.xr + sh.xl * sh.xl)
+    M.kp = clamp(M.kp + g * sh.xp * 0.5, -15, 15)
+    M.kr = clamp(M.kr + g * sh.xr * 0.5, -15, 15)
+    M.kl = clamp(M.kl + g * sh.xl * 0.5, -15, 15)
+end
+
+local EXPLORE = { -0.5, 0.5, -1, 1, -1.5, 1.5 }
+
+local function learnTime(sh, cls)
+    pushSample(TS, sh.r, cls, CAP_TIME, sh.dist)
+    ST.tsVer = (ST.tsVer or 0) + 1
+    local anyP = false
+    for _, s in ipairs(TS) do if s.c == "P" then anyP = true break end end
+    if anyP or cls == "E" or cls == "L" then
+        ST.explore, ST.exploreN = 0, 0
+    elseif cls == "N" then
+        ST.exploreN = (ST.exploreN or 0) + 1
+        ST.explore = EXPLORE[((ST.exploreN - 1) % #EXPLORE) + 1] * ST.step * 1000
+    end
+    local c, _, _, lb, ub = bracket(TS, timeSafe(), 4)
+    if c then
+        if M.g == nil then M.g = c else M.g = M.g + (c - M.g) * 0.5 end
+        M.g = clamp(M.g, -80, 140)
+    else
+        local g = timeCenter()
+        if lb and lb > g - 6 then g = lb + 8 end
+        if ub and ub < g + 6 then g = ub - 8 end
+        M.g = clamp(g, -80, 140)
+    end
+    if math.abs(sh.extra) <= 8 then
+        if cls == "E" then compLearn(sh, 1) elseif cls == "L" then compLearn(sh, -1) end
+    end
+end
+
+local function learnMeter(px, rate, cls)
+    pushSample(BAR.S, px, cls, CAP_BAR)
+    local r = rate or 2.7
+    local g = BAR.gdt or ST.step
+    local stepE = ST.fine and g or math.max(ST.step, g)
+    local c, _, _, lb, ub = bracket(BAR.S, r * (0.5 * stepE + 0.002), r * 0.0012)
+    if c then
+        if BAR.Pc == nil then BAR.Pc = c else BAR.Pc = BAR.Pc + (c - BAR.Pc) * 0.5 end
+    elseif BAR.Pc then
+        local m = math.max(0.015, (rate or 2.7) * 0.007)
+        if lb and lb > BAR.Pc - m then BAR.Pc = lb + m end
+        if ub and ub < BAR.Pc + m then BAR.Pc = ub - m end
+    end
+end
+
+local function meterPerfects()
+    local n, lo, hi = 0, math.huge, -math.huge
+    for _, s in ipairs(BAR.S) do
+        if s.c == "P" then
+            n = n + 1
+            if s.x < lo then lo = s.x end
+            if s.x > hi then hi = s.x end
+        end
+    end
+    if n == 0 then return 0, 0 end
+    return n, hi - lo
+end
+
+local function barReady()
+    if not BAR.path or BAR.lock < 2 or BAR.Pc == nil then return false end
+    local n, spread = meterPerfects()
+    return n >= 2 and spread <= 0.08
+end
+
+local GUI = { info = nil, meter = nil, cover = nil, coverScanT = 0 }
+
+local function alive_(o)
+    if not o then return false end
+    local ok, p = pcall(rdParent, o)
+    return ok and p ~= nil
+end
+
+local function getShotInfo()
+    if GUI.info and alive_(GUI.info) then return GUI.info end
+    GUI.info, GUI.meter = nil, nil
+    local ok, pg = pcall(rdFind, player, "PlayerGui")
+    if not ok or not pg then return nil end
+    local ok2, vis = pcall(rdFind, pg, "Visual")
+    if not ok2 or not vis then return nil end
+    local ok3, info = pcall(rdFind, vis, "ShotInfo")
+    if ok3 and info then GUI.info = info end
+    return GUI.info
+end
+
+local function getMeterLabel()
+    if GUI.meter and alive_(GUI.meter) then return GUI.meter end
+    GUI.meter = nil
+    local info = getShotInfo()
+    if not info then return nil end
+    local ok, tm = pcall(rdFind, info, "Timing")
+    if not ok or not tm then return nil end
+    local ok2, m = pcall(rdFind, tm, "Meter")
+    if ok2 and m then GUI.meter = m end
+    return GUI.meter
+end
+
+local function readResult()
+    local m = getMeterLabel()
+    if not m then return nil end
+    local ok, t = pcall(rdText, m)
+    if not ok or not t then return nil end
+    local r = string.upper(tostring(t))
+    if VALID[r] then return r end
+    return nil
+end
+
+local function parsePercent(t)
+    if not t then return nil end
+    local v = string.match(tostring(t), "([%d%.]+)%%")
+    if v then return tonumber(v) end
+    return nil
+end
+
+local function readCoverage()
+    if GUI.cover then
+        local ok, t = pcall(rdText, GUI.cover)
+        if ok then
+            local v = parsePercent(t)
+            if v ~= nil then return v end
+        end
+    end
+    if now() - GUI.coverScanT < 0.25 then return nil end
+    GUI.coverScanT = now()
+    local info = getShotInfo()
+    if not info then return nil end
+    local ok, list = pcall(rdDesc, info)
+    if not ok or type(list) ~= "table" then return nil end
+    local fbObj, fbVal = nil, nil
+    for _, obj in ipairs(list) do
+        local okt, t = pcall(rdText, obj)
+        if okt and t then
+            local p = parsePercent(t)
+            if p ~= nil then
+                local okn, nm = pcall(rdName, obj)
+                nm = okn and string.lower(tostring(nm)) or ""
+                if string.find(nm, "cover", 1, true) or string.find(nm, "contest", 1, true) then
+                    GUI.cover = obj
+                    return p
+                end
+                fbObj, fbVal = obj, p
+            end
+        end
+    end
+    if fbObj then
+        GUI.cover = fbObj
+        return fbVal
+    end
+    return nil
+end
+
+local function waitResult()
+    task.wait(0.08)
+    local start = now()
+    local res, cov = nil, nil
+    while alive and now() - start < 0.85 do
+        local r = readResult()
+        if r then res = r end
+        local c = readCoverage()
+        if c ~= nil then cov = c end
+        task.wait(0.025)
+    end
+    return res, cov
+end
+
+local function newCand(o, path)
+    local okp, par = pcall(rdParent, o)
+    return { o = o, par = okp and par or nil, path = path, v = { {}, {}, {}, {} }, t = {}, passes = 0 }
+end
+
+local function sampleCand(c, t)
+    local par = c.par
+    if not par then return end
+    local ok1, s = pcall(rdAbsSize, c.o)
+    if not ok1 or not s then return end
+    local ok2, p = pcall(rdAbsPos, c.o)
+    if not ok2 or not p then return end
+    local ok3, ps = pcall(rdAbsSize, par)
+    if not ok3 or not ps or ps.X < 2 or ps.Y < 2 then return end
+    local ok4, pp = pcall(rdAbsPos, par)
+    if not ok4 or not pp then return end
+    local n = #c.t + 1
+    c.t[n] = t
+    c.v[1][n] = s.X / ps.X
+    c.v[2][n] = s.Y / ps.Y
+    c.v[3][n] = (p.X - pp.X) / ps.X
+    c.v[4][n] = (p.Y - pp.Y) / ps.Y
+end
+
+local function readChan(c, ch)
+    local o, par = c.o, c.par
+    if not par then return nil end
+    if ch == 1 or ch == 2 then
+        local ok, s = pcall(rdAbsSize, o)
+        if not ok or not s then return nil end
+        local ok2, ps = pcall(rdAbsSize, par)
+        if not ok2 or not ps then return nil end
+        if ch == 1 then
+            if ps.X < 2 then return nil end
+            return s.X / ps.X
+        end
+        if ps.Y < 2 then return nil end
+        return s.Y / ps.Y
+    end
+    local ok, p = pcall(rdAbsPos, o)
+    if not ok or not p then return nil end
+    local ok2, pp = pcall(rdAbsPos, par)
+    if not ok2 or not pp then return nil end
+    local ok3, ps = pcall(rdAbsSize, par)
+    if not ok3 or not ps then return nil end
+    if ch == 3 then
+        if ps.X < 2 then return nil end
+        return (p.X - pp.X) / ps.X
+    end
+    if ps.Y < 2 then return nil end
+    return (p.Y - pp.Y) / ps.Y
+end
+
+local function collect(rootObj)
+    local out = {}
+    local function walk(o, path, depth)
+        if depth > 8 or #out >= 80 then return end
+        local ok, kids = pcall(rdKids, o)
+        if not ok or type(kids) ~= "table" then return end
+        for _, k in ipairs(kids) do
+            if #out >= 80 then return end
+            local okn, nm = pcall(rdName, k)
+            if okn and nm then
+                local p = {}
+                for i = 1, #path do p[i] = path[i] end
+                p[#p + 1] = tostring(nm)
+                out[#out + 1] = newCand(k, p)
+                walk(k, p, depth + 1)
+            end
+        end
+    end
+    walk(rootObj, {}, 0)
+    return out
+end
+
+local function resolve(rootObj, path)
+    local cur = rootObj
+    for _, nm in ipairs(path) do
+        if not cur then return nil end
+        local ok, nx = pcall(rdFind, cur, nm)
+        if not ok then return nil end
+        cur = nx
+    end
+    return cur
+end
+
+local function samePath(a, b)
+    if not a or not b or #a ~= #b then return false end
+    for i = 1, #a do if a[i] ~= b[i] then return false end end
+    return true
+end
+
+local function pathKey(p)
+    return table.concat(p, "\1")
+end
+
+local function prune(cands, lockC, el)
+    local i = 1
+    while i <= #cands do
+        local c = cands[i]
+        local drop = false
+        if c ~= lockC then
+            local n = #c.t
+            if n == 0 and c.passes >= 2 then
+                drop = true
+            elseif el >= 0.1 and n >= 4 then
+                local moved = false
+                for ch = 1, 4 do
+                    local lo, hi = math.huge, -math.huge
+                    for _, v in ipairs(c.v[ch]) do
+                        if v < lo then lo = v end
+                        if v > hi then hi = v end
+                    end
+                    if hi - lo > 0.005 then moved = true break end
+                end
+                drop = not moved
+            end
+        end
+        if drop then table.remove(cands, i) else i = i + 1 end
+    end
+end
+
+local function analyze(cands)
+    local best, bestS = nil, 0
+    for _, c in ipairs(cands) do
+        local n = #c.t
+        if n >= 4 then
+            for ch = 1, 4 do
+                local vals = c.v[ch]
+                if #vals == n then
+                    local dv = vals[n] - vals[1]
+                    local ad = math.abs(dv)
+                    if ad >= 0.12 and ad <= 1.6 then
+                        local sg = dv > 0 and 1 or -1
+                        local good, tot = 0, 0
+                        for i = 2, n do
+                            local st = vals[i] - vals[i - 1]
+                            if math.abs(st) > 1e-4 then
+                                tot = tot + 1
+                                if st * sg > 0 then good = good + 1 end
+                            end
+                        end
+                        if tot >= 3 and good / tot >= 0.85 then
+                            local s = ad * (good / tot) * math.min(1, tot / (n - 1) + 0.3)
+                            if s > bestS then
+                                bestS = s
+                                best = { path = c.path, ch = ch, sgn = sg, cand = c }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function dedupe(ts, vs, sgn)
+    local hist, last = {}, nil
+    for i = 1, #ts do
+        local v = vs[i]
+        if v then
+            v = v * sgn
+            if last == nil or math.abs(v - last) > 1e-6 then
+                hist[#hist + 1] = { t = ts[i], v = v }
+                last = v
+            end
+        end
+    end
+    return hist
+end
+
+local function rateOf(hist)
+    local hn = #hist
+    if hn < 3 then return nil end
+    local tl = hist[hn].t
+    local k = hn - 2
+    while k > 1 and tl - hist[k - 1].t <= 0.1 do k = k - 1 end
+    local dt = tl - hist[k].t
+    if dt <= 0 then return nil end
+    return (hist[hn].v - hist[k].v) / dt, clamp(dt / (hn - k), 1 / 400, 1 / 15)
+end
+
+local function frameMean(hist)
+    local i0 = 2
+    if #hist >= 2 and hist[1].v > 1e-4 then i0 = 1 end
+    local n = #hist - i0
+    if n < 3 then return nil end
+    local dt = hist[#hist].t - hist[i0].t
+    if dt <= 0 then return nil end
+    return dt / n
+end
+
+local function updateLockFromHist(hist)
+    if #hist >= 4 and hist[#hist].v - hist[1].v >= 0.12 then
+        BAR.lock = math.min(BAR.lock + 1, 5)
+        return true
+    end
+    BAR.lock = BAR.lock - 1
+    if BAR.lock <= 0 then resetBar() end
+    return false
+end
+
+local function updateLockFromBest(best)
+    if best then
+        if BAR.path and samePath(best.path, BAR.path) and best.ch == BAR.ch and best.sgn == BAR.sgn then
+            BAR.lock = math.min(BAR.lock + 1, 5)
+            return true
+        end
+        if BAR.lock <= 1 then
+            resetBar()
+            BAR.path, BAR.ch, BAR.sgn, BAR.lock = best.path, best.ch, best.sgn, 1
+            return true
+        end
+        BAR.lock = BAR.lock - 1
+        return false
+    end
+    if BAR.path then
+        BAR.lock = BAR.lock - 1
+        if BAR.lock <= 0 then resetBar() end
+    end
+    return false
+end
+
+local function stepWait()
+    local a = now()
+    task.wait()
+    local d = now() - a
+    if d > 0 and d < 0.25 then ST.step = ST.step + (d - ST.step) * 0.2 end
+end
+
+local function calibrate()
+    for i = 1, 20 do stepWait() end
+    local fs = {}
+    for i = 1, 7 do
+        local a = now()
+        task.wait(0.002)
+        fs[#fs + 1] = now() - a
+    end
+    table.sort(fs)
+    ST.fine = fs[4] < 0.006 and fs[4] < ST.step * 0.6
+    ST.bias = ST.fine and 1 or ST.step * 500
+    if BAR.fine ~= nil and BAR.fine ~= ST.fine then
+        BAR.S, BAR.Pc = {}, nil
+    end
+    BAR.fine = ST.fine
+    ST.calib = true
+end
+
+
+
+local function release(vk)
+    pcall(keyrelease, vk)
+end
+
+local function pauseUI(b)
+    if C.pauseUi and Lib and Lib.SetRenderPaused then pcall(Lib.SetRenderPaused, Lib, b) end
+end
+
+local function gradeIndex(name)
+    for i, n in ipairs(GRADES) do if n == name then return i end end
+    return 1
+end
+
+local function pickGrade()
+    local tg = gradeIndex(C.target)
+    local hit = rand() * 100 < C.chance
+    if tg == 1 and C.maxStreak > 0 and ST.streak >= C.maxStreak then hit = false end
+    if hit then return tg end
+    local mg = C.missGrade
+    if mg == "Random (Great/Good)" then return (rand() < 0.5) and 2 or 3 end
+    if mg == "Random (Any)" then return 2 + math.floor(rand() * 5) end
+    return gradeIndex(mg)
+end
+
+local function gradeOffset(g)
+    local j = 0
+    if C.jitter > 0 then j = (rand() * 2 - 1) * C.jitter end
+    if g <= 1 then return j, 0 end
+    local sd = 1
+    if C.side == "Early" then sd = -1
+    elseif C.side == "Late" then sd = 1
+    elseif rand() < 0.5 then sd = -1 end
+    local mag = (sd < 0) and GDE[g] or GDL[g]
+    return sd * mag + j, sd
+end
+
+local function fixGrades(t)
+    for i = 2, 6 do
+        local lo = t[i - 1] + 2
+        if t[i] < lo then t[i] = lo end
+        if t[i] > 150 then t[i] = 150 end
+    end
+end
+
+local function learnGrade(g, res, sd)
+    if g <= 1 or not res or sd == 0 then return end
+    local r = RANK[res]
+    if not r then return end
+    local t = (sd < 0) and GDE or GDL
+    local isEarly = string.find(res, "EARLY", 1, true) ~= nil
+    local isLate = string.find(res, "LATE", 1, true) ~= nil
+    if r < g then
+        t[g] = t[g] + 3
+    elseif r > g then
+        if (sd < 0 and isLate) or (sd > 0 and isEarly) then t[g] = t[g] + 3 else t[g] = t[g] - 3 end
+    end
+    fixGrades(t)
+end
+
+local function processResult(sh, res, cov)
+    ST.shots = ST.shots + 1
+    if sh.manual then
+        ST.miss = ST.miss + 1
+        ST.last = "MANUAL"
+        ST.lastMode = sh.mode
+        if C.log then print("[BASKETBALL] released manually, shot ignored") end
+        ST.dirty = true
+        return
+    end
+    if res == "PERFECT" then ST.perfect = ST.perfect + 1 ST.streak = ST.streak + 1 else ST.streak = 0 end
+    if res == "GREAT" then ST.great = ST.great + 1 end
+    if res == "GOOD" then ST.goodOnly = ST.goodOnly + 1 end
+    if res == "GOOD" or res == "GREAT" then ST.good = ST.good + 1
+    elseif res and string.find(res, "EARLY", 1, true) then ST.early = ST.early + 1
+    elseif res and string.find(res, "LATE", 1, true) then ST.late = ST.late + 1
+    elseif res ~= "PERFECT" then ST.miss = ST.miss + 1 end
+    if res then
+        ST.attempts = ST.attempts + 1
+        if RANK[res] == sh.grade then ST.hits = ST.hits + 1 end
+    end
+    ST.lastTarget = GRADES[sh.grade] or "?"
+    ST.lastExtra = sh.extra
+    ST.last = res or "?"
+    ST.lastD = sh.dist
+    ST.lastDelay = sh.actual or 0
+    ST.lastPred = sh.aim
+    ST.lastMode = sh.mode
+
+    local cls = res and CLS[res] or nil
+
+    if cls and sh.actual then
+        if C.learn then
+            sh.r = sh.actual - sh.base
+            learnTime(sh, cls)
+        end
+        if C.gradeLearn then learnGrade(sh.grade, res, sh.sdir) end
+        if C.mode == 0 then
+            local px, prate = sh.px, sh.prate
+            local hist = sh.hist
+            if sh.lockedShot then
+                updateLockFromHist(hist)
+            elseif sh.cands then
+                local best = analyze(sh.cands)
+                if updateLockFromBest(best) and best then
+                    if not (px and samePath(best.path, sh.lockPath or {}) and best.ch == sh.lockCh) then
+                        hist = dedupe(best.cand.t, best.cand.v[best.ch], best.sgn)
+                        local r, d = rateOf(hist)
+                        if r and r > 0 then
+                            px, prate = hist[#hist].v + r * (BAR.gdt or d), r
+                        else
+                            px = nil
+                        end
+                    end
+                else
+                    px = nil
+                end
+            end
+            if hist and #hist >= 6 then
+                local fmn = frameMean(hist)
+                if fmn then
+                    if BAR.gdt == nil or math.abs(fmn - BAR.gdt) > BAR.gdt * 0.5 then
+                        BAR.gdtN = (BAR.gdtN or 0) + 1
+                        if BAR.gdt == nil or BAR.gdtN >= 3 then
+                            BAR.gdt, BAR.gdtN = fmn, 0
+                        end
+                    else
+                        BAR.gdt = BAR.gdt * 0.8 + fmn * 0.2
+                        BAR.gdtN = 0
+                    end
+                end
+            end
+            if px and BAR.path and C.learn then
+                learnMeter(px, prate, cls)
+                if sh.mode == "METER" and sh.grade == 1 and math.abs(sh.extra) <= 8 then
+                    if cls == "P" then BAR.miss = 0 else BAR.miss = BAR.miss + 1 end
+                    if BAR.miss >= 6 then
+                        BAR.S, BAR.Pc, BAR.miss = {}, nil, 0
+                        if C.log then print("[BASKETBALL] meter target relearning") end
+                    end
+                end
+            end
+        end
+    end
+
+    if C.log then
+        print(string.format(
+            "#%d | D:%.1f | want %s (%+.0fms) | %s %.0fms (aim %.0f) | %s | C:%s | P:%s | R:%.1f L:%.1f | x:%s Pc:%s L%d | center:%.1fms frame:%.1fms",
+            ST.shots, sh.dist, GRADES[sh.grade] or "?", sh.extra, sh.mode, sh.actual or 0, sh.aim, res or "?",
+            cov and (tostring(round1(cov)) .. "%") or "?",
+            sh.ping and tostring(sh.ping) or "?",
+            sh.mv.radial, sh.mv.lateral,
+            sh.px and string.format("%.3f", sh.px) or "-", BAR.Pc and string.format("%.3f", BAR.Pc) or "-", BAR.lock, timeCenter(), (BAR.gdt or 0) * 1000
+        ))
+    end
+    ST.dirty = true
+end
+
+local function shoot(t0, vk)
+    local root = getRoot()
+    if not root then
+        if C.log then print("[BASKETBALL] no character") end
+        return
+    end
+    local hoop, dist, facing, rp = getTarget(root)
+    if not hoop then
+        if C.log then print("[BASKETBALL] hoop not found") end
+        return
+    end
+    if dist < C.minDist or dist > C.maxDist then
+        ST.skipped = ST.skipped + 1
+        ST.last = "SKIPPED"
+        ST.lastD = dist
+        if C.log then print(string.format("[BASKETBALL] distance %.1f outside %d-%d, not touching this shot", dist, C.minDist, C.maxDist)) end
+        return
+    end
+    local grade = pickGrade()
+    local extra, sdir = gradeOffset(grade)
+    local ping = ST.ping
+    local mv = getMovement(root, hoop, rp)
+    local xp, xr, xl = features(mv, ping)
+    local base, a, b, f = baseTime(dist, xp, xr, xl)
+    local aim = clamp(base + timeCenterAt(dist) + C.off + extra, D_MIN, D_MAX)
+    local tgt = t0 + aim / 1000
+    local sh = {
+        a = a, b = b, f = f, xp = xp, xr = xr, xl = xl, base = base, aim = aim,
+        grade = grade, extra = extra, sdir = sdir, dist = dist, mv = mv, ping = ping
+    }
+    local fine = ST.fine
+    local useBar = C.mode == 0 and barReady()
+    local locked = C.mode == 0 and BAR.path ~= nil and BAR.lock >= 3
+    local info, cands, lockC, recol = nil, nil, nil, false
+    local hist, lastV = {}, nil
+    local mode = useBar and "METER" or "TIME"
+    local ups, lastStore = 0, 0
+    local offs = (C.off + extra) / 1000
+    local pc = BAR.Pc
+    local lockCh, lockSgn = BAR.ch, BAR.sgn
+    local loopStep = fine and 0.002 or ST.step
+    local sampleEvery = fine and 0.006 or 0.0015
+    sh.lockPath = BAR.path
+    sh.lockCh = lockCh
+    sh.lockedShot = locked
+
+    while alive do
+        local n0 = now()
+        local el0 = n0 - t0
+        if C.mode == 0 then
+            if not info then info = getShotInfo() end
+            if info and not cands then
+                if locked then
+                    local o = resolve(info, BAR.path)
+                    if o then
+                        lockC = newCand(o, BAR.path)
+                        cands = { lockC }
+                    end
+                else
+                    local list = collect(info)
+                    if #list > 0 then
+                        cands = list
+                        if BAR.path then
+                            for _, c in ipairs(list) do
+                                if samePath(c.path, BAR.path) then lockC = c break end
+                            end
+                        end
+                    end
+                end
+            elseif info and cands and not locked and not recol and el0 >= 0.08 then
+                recol = true
+                local have = {}
+                for _, c in ipairs(cands) do have[pathKey(c.path)] = true end
+                for _, c in ipairs(collect(info)) do
+                    if not have[pathKey(c.path)] then
+                        cands[#cands + 1] = c
+                        if not lockC and BAR.path and samePath(c.path, BAR.path) then lockC = c end
+                    end
+                end
+            end
+            if cands and not locked and n0 - lastStore >= sampleEvery then
+                lastStore = n0
+                for _, c in ipairs(cands) do
+                    c.passes = c.passes + 1
+                    sampleCand(c, n0)
+                end
+                prune(cands, lockC, el0)
+            end
+            if lockC then
+                local v = readChan(lockC, lockCh)
+                if v then
+                    if locked then
+                        local k = #lockC.t + 1
+                        lockC.t[k] = n0
+                        lockC.v[lockCh][k] = v
+                    end
+                    v = v * lockSgn
+                    if lastV == nil or math.abs(v - lastV) > 1e-6 then
+                        hist[#hist + 1] = { t = n0, v = v }
+                        lastV = v
+                    end
+                end
+            end
+        end
+
+        local n = now()
+        local el = n - t0
+        local fire = false
+        if mode == "METER" then
+            local hn = #hist
+            if hn >= 3 then
+                local rate, dEst = rateOf(hist)
+                local d = BAR.gdt or dEst
+                if hist[hn].v < hist[hn - 1].v - 0.15 then
+                    mode = "TIME*"
+                elseif rate and rate > 0 and el >= aim / 2000 then
+                    local stepE = math.max(loopStep, d)
+                    if lastV + rate * d + rate * (0.5 * stepE - offs) >= pc then fire = true end
+                end
+            elseif el > 0.15 and hn == 0 then
+                mode = "TIME*"
+            end
+            if not fire and el >= aim / 1000 + 0.08 then
+                fire = true
+                mode = "METER!"
+            end
+        end
+        if not fire and mode ~= "METER" and mode ~= "METER!" then
+            if tgt - n <= loopStep * 0.5 then fire = true end
+        end
+        if fire then
+            local tRel = now()
+            release(vk)
+            sh.actual = (tRel - t0) * 1000
+            sh.tRel = tRel
+            sh.loopStep = loopStep
+            if lockC and #hist >= 3 then
+                local rate, dEst = rateOf(hist)
+                if rate and rate > 0 then
+                    sh.px = lastV + rate * (BAR.gdt or dEst)
+                    sh.prate = rate
+                end
+            end
+            break
+        end
+        if keyDown(vk) then
+            ups = 0
+        else
+            ups = ups + 1
+            if ups >= 2 then
+                sh.manual = true
+                break
+            end
+        end
+        if el > 2.5 then break end
+        local w0 = now()
+        if fine then task.wait(0.002) else task.wait() end
+        local dw = now() - w0
+        if dw > 0 and dw < 0.25 then
+            loopStep = loopStep + (dw - loopStep) * 0.25
+            if not fine then ST.step = ST.step + (dw - ST.step) * 0.2 end
+        end
+    end
+    sh.mode = mode
+    sh.hist = hist
+    sh.cands = cands
+    sh.fine = fine
+    ST.busy = false
+    pauseUI(false)
+    if not alive then return end
+    task.spawn(function()
+        local res, cov = waitResult()
+        if not alive then return end
+        local ok, err = pcall(processResult, sh, res, cov)
+        if not ok then print("[BASKETBALL] result error: " .. tostring(err)) end
+    end)
+end
+
+local function waitRearm(vk)
+    local relT = nil
+    while alive do
+        if keyDown(vk) then
+            relT = nil
+        else
+            relT = relT or now()
+            if now() - relT >= 0.15 then return end
+        end
+        task.wait()
+    end
+end
+
+local loaded = loadData()
+
+task.spawn(function()
+    local was = false
+    local vk = keyVK(C.keyName)
+    local vkName = C.keyName
+    while alive do
+        if vkName ~= C.keyName then
+            vkName = C.keyName
+            vk = keyVK(vkName)
+        end
+        if ST.keyChanged then
+            ST.keyChanged = false
+            was = true
+        end
+        local down = vk ~= nil and keyDown(vk)
+        if vk and C.on and down and not was and robloxActive() then
+            local t0 = now()
+            ST.busy = true
+            pauseUI(true)
+            local ok, err = pcall(shoot, t0, vk)
+            if not ok then print("[BASKETBALL] error: " .. tostring(err)) end
+            ST.busy = false
+            pauseUI(false)
+            waitRearm(vk)
+            was = false
+        else
+            was = down
+            task.wait()
+        end
+    end
+end)
+
+task.spawn(function()
+    calibrate()
+    scanHoops()
+    print("[BASKETBALL] READY | hoops: " .. tostring(#hoops) .. (loaded and " | data loaded" or ""))
+    local lastPing = 0
+    while alive do
+        local n = now()
+        if not ST.busy then
+            if n - lastPing >= 0.5 then
+                lastPing = n
+                local p = getPing()
+                if p then
+                    ST.ping = p
+                    if M.pavg then M.pavg = M.pavg + (p - M.pavg) * 0.05 else M.pavg = p end
+                end
+            end
+            if ST.needScan or n - ST.scanT >= 20 then scanHoops() end
+            if ST.dirty and n - ST.lastSave >= 2 then saveData() end
+        end
+        task.wait(0.25)
+    end
+end)
+
+local function pct(a, b)
+    if b <= 0 then return "0%" end
+    return string.format("%.0f%%", a / b * 100)
+end
+
+local function meterStatus()
+    if C.mode == 1 then return "off (timing only)" end
+    if not BAR.path then return "searching" end
+    if barReady() then return string.format("ACTIVE  Pc=%.3f", BAR.Pc) end
+    local n = meterPerfects()
+    return string.format("learning  lock %d/2  perf %d/2", BAR.lock, n)
+end
+
+local function toast(msg, dur, kind)
+    if Lib and C.notif then pcall(function() Lib:Notify(msg, "Basketball", dur or 2.5, kind) end) end
+end
+
+local function applyAccent(name)
+    if not QuantomLib then return false end
+    for _, a in ipairs(ACCENTS) do
+        if a[1] == name then
+            local c = Color3.fromRGB(a[2], a[3], a[4])
+            local d = Color3.fromRGB(math.floor(a[2] * 0.6), math.floor(a[3] * 0.6), math.floor(a[4] * 0.6))
+            QuantomLib:SetTheme({ accent = c, tab_text_active = c, toggle_on = c, slider_fill = c, accent_dark = d })
+            return true
+        end
+    end
+    return false
+end
+
+local UIL = {}
+local EL = {}
+local TABS = {}
+
+local ok, err = pcall(function()
+    if not QuantomLib then error("library not loaded") end
+    Lib = QuantomLib
+    applyAccent(C.accent)
+    Win = QuantomLib.new({ title = "Basketball", subtitle = "quantom.gg", x = C.wx, y = C.wy, width = 680, toggleKey = C.menuKey })
+
+    TABS.main = Win:Tab("Main")
+    TABS.shot = Win:Tab("Shot")
+    TABS.stats = Win:Tab("Stats")
+    TABS.sett = Win:Tab("Settings")
+
+    local s1 = TABS.main:Section({ name = "Auto Release", side = "left" })
+    s1:Toggle({ name = "Enabled", default = C.on, keybind = C.toggleKey, tip = "Turns the auto release on or off", callback = function(v)
+        C.on = v
+        ST.dirty = true
+        toast(v and "Enabled" or "Disabled", 1.5, v and "success" or "warning")
+    end, keybindCallback = function(k)
+        C.toggleKey = k
+        ST.dirty = true
+    end })
+    s1:Keybind({ name = "Shoot Key", default = C.keyName, tip = "The key you hold to shoot", callback = function(k)
+        C.keyName = k
+        ST.keyChanged = true
+        ST.dirty = true
+        toast("Shoot key: " .. k, 2)
+    end })
+    s1:Dropdown({ name = "Release Mode", options = { "Auto (Meter > Timing)", "Timing Only" },
+        default = C.mode == 1 and "Timing Only" or "Auto (Meter > Timing)", tip = "Auto reads the shot meter when it finds it", callback = function(v)
+        C.mode = v == "Timing Only" and 1 or 0
+        ST.dirty = true
+    end })
+    s1:Slider({ name = "Global Offset", min = -30, max = 30, default = C.off, decimals = 0, suffix = " ms", tip = "+ releases later, - releases earlier", callback = function(v)
+        C.off = math.floor(v)
+        ST.dirty = true
+    end })
+
+    local s2 = TABS.main:Section({ name = "Learning", side = "right" })
+    s2:Toggle({ name = "Adaptive Timing", default = C.learn, tip = "Learns the perfect window from every shot", callback = function(v) C.learn = v ST.dirty = true end })
+    s2:Toggle({ name = "Learn Grade Offsets", default = C.gradeLearn, tip = "Learns how far to shift for Great / Good", callback = function(v) C.gradeLearn = v ST.dirty = true end })
+    s2:Toggle({ name = "Ping / Movement Comp", default = C.comp, callback = function(v) C.comp = v ST.dirty = true end })
+    s2:Toggle({ name = "Console Log", default = C.log, callback = function(v) C.log = v ST.dirty = true end })
+
+    local s3 = TABS.main:Section({ name = "Live", side = "right" })
+    UIL.live1 = s3:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.live2 = s3:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.live3 = s3:Label({ text = "-", color = QuantomLib.Theme.text })
+
+    local s4 = TABS.shot:Section({ name = "Result Control", side = "left" })
+    EL.target = s4:Dropdown({ name = "Target Result", options = GRADES, default = C.target, callback = function(v)
+        C.target = v
+        ST.dirty = true
+    end })
+    EL.chance = s4:Slider({ name = "Hit Chance", min = 0, max = 100, default = C.chance, decimals = 0, suffix = " %", tip = "% of shots that land the target result", callback = function(v)
+        C.chance = math.floor(v)
+        ST.dirty = true
+    end })
+    EL.miss = s4:Dropdown({ name = "When Not Hitting", options = MISS_OPTS, default = C.missGrade, callback = function(v)
+        C.missGrade = v
+        ST.dirty = true
+    end })
+    EL.side = s4:Dropdown({ name = "Miss Side", options = SIDE_OPTS, default = C.side, callback = function(v)
+        C.side = v
+        ST.dirty = true
+    end })
+
+    local s5 = TABS.shot:Section({ name = "Humanize", side = "right" })
+    EL.jitter = s5:Slider({ name = "Timing Jitter", min = 0, max = 30, default = C.jitter, decimals = 0, suffix = " ms", tip = "Random +/- variation on every shot", callback = function(v)
+        C.jitter = math.floor(v)
+        ST.dirty = true
+    end })
+    EL.streak = s5:Slider({ name = "Max Perfect Streak", min = 0, max = 30, default = C.maxStreak, decimals = 0, tip = "0 = no limit", callback = function(v)
+        C.maxStreak = math.floor(v)
+        ST.dirty = true
+    end })
+
+    local s6 = TABS.shot:Section({ name = "Distance Filter", side = "right" })
+    s6:Slider({ name = "Min Distance", min = 0, max = 100, default = C.minDist, decimals = 0, suffix = " studs", callback = function(v)
+        C.minDist = math.floor(v)
+        ST.dirty = true
+    end })
+    s6:Slider({ name = "Max Distance", min = 0, max = 100, default = C.maxDist, decimals = 0, suffix = " studs", tip = "Outside the range you release manually", callback = function(v)
+        C.maxDist = math.floor(v)
+        ST.dirty = true
+    end })
+
+    local s7 = TABS.shot:Section({ name = "Presets", side = "left" })
+    local function applyPreset(p, name)
+        EL.target:Set(p.target)
+        EL.chance:Set(p.chance)
+        EL.miss:Set(p.missGrade)
+        EL.side:Set(p.side)
+        EL.jitter:Set(p.jitter)
+        EL.streak:Set(p.maxStreak)
+        toast("Preset: " .. name, 2, "success")
+    end
+    s7:Button({ name = "Always Perfect", callback = function()
+        applyPreset({ target = "Perfect", chance = 100, missGrade = "Great", side = "Random", jitter = 0, maxStreak = 0 }, "Always Perfect")
+    end })
+    s7:Button({ name = "Legit (80% Perfect)", callback = function()
+        applyPreset({ target = "Perfect", chance = 80, missGrade = "Random (Great/Good)", side = "Random", jitter = 4, maxStreak = 6 }, "Legit")
+    end })
+    s7:Button({ name = "Casual (Great / Good)", callback = function()
+        applyPreset({ target = "Great", chance = 70, missGrade = "Good", side = "Random", jitter = 6, maxStreak = 0 }, "Casual")
+    end })
+
+    local s8 = TABS.stats:Section({ name = "Results", side = "left" })
+    UIL.r1 = s8:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.r2 = s8:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.r3 = s8:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.r4 = s8:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.r5 = s8:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.r6 = s8:Label({ text = "-", color = QuantomLib.Theme.text })
+
+    local s9 = TABS.stats:Section({ name = "Last Shot", side = "left" })
+    UIL.l1 = s9:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.l2 = s9:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.l3 = s9:Label({ text = "-", color = QuantomLib.Theme.text })
+
+    local s10 = TABS.stats:Section({ name = "Engine", side = "right" })
+    UIL.m1 = s10:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.m2 = s10:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.m3 = s10:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.m4 = s10:Label({ text = "-", color = QuantomLib.Theme.text })
+    UIL.m5 = s10:Label({ text = "-", color = QuantomLib.Theme.text })
+
+    local s11 = TABS.stats:Section({ name = "Tools", side = "right" })
+    s11:Button({ name = "Rescan Hoops", callback = function()
+        ST.needScan = true
+        toast("Rescanning hoops")
+    end })
+    s11:Button({ name = "Reset Meter Detection", callback = function()
+        resetBar()
+        ST.dirty = true
+        toast("Meter detection reset", 2, "warning")
+    end })
+    s11:Button({ name = "Reset Learning", callback = function()
+        resetLearning()
+        toast("Learning reset", 2, "warning")
+    end })
+    s11:Button({ name = "Reset Stats", callback = function()
+        resetStats()
+        toast("Stats reset", 2, "warning")
+    end })
+
+    local s12 = TABS.sett:Section({ name = "Interface", side = "left" })
+    s12:Keybind({ name = "Menu Key", default = C.menuKey, callback = function(k)
+        C.menuKey = k
+        Win.toggleKey = k
+        ST.dirty = true
+    end })
+    s12:Dropdown({ name = "Accent", options = ACCENT_NAMES, default = C.accent, callback = function(v)
+        C.accent = v
+        applyAccent(v)
+        ST.dirty = true
+    end })
+    s12:Toggle({ name = "Watermark", default = C.wm, callback = function(v)
+        C.wm = v
+        if UIL.wm then UIL.wm:SetVisible(v) end
+        ST.dirty = true
+    end })
+    s12:Toggle({ name = "Notifications", default = C.notif, callback = function(v)
+        C.notif = v
+        ST.dirty = true
+    end })
+    s12:Toggle({ name = "Pause UI While Shooting", default = C.pauseUi, tip = "Frees the VM for the timing loop during the hold", callback = function(v)
+        C.pauseUi = v
+        ST.dirty = true
+    end })
+    s12:Button({ name = "Save Now", callback = function()
+        saveData()
+        toast("Saved to " .. DATA_FILE, 2, "success")
+    end })
+
+    local s13 = TABS.sett:Section({ name = "About", side = "right" })
+    s13:Label({ text = "Basketball  +  QuantomLib " .. tostring(QuantomLib._version) })
+    s13:Label({ text = "Data: " .. DATA_FILE })
+    s13:Label({ text = "Click a key box, then press a key.\nEsc / Backspace = unbind." })
+
+    UIL.wm = QuantomLib:Watermark("Basketball  |  {fps} fps")
+    UIL.wm:SetVisible(C.wm)
+end)
+if not ok then print("[BASKETBALL] UI error: " .. tostring(err)) end
+
+local function setL(el, txt)
+    if el and el.text ~= txt then el:Set(txt) end
+end
+
+task.spawn(function()
+    local lastWx, lastWy = C.wx, C.wy
+    local lastWm = nil
+    while alive do
+        if Win then
+            if (Win.x ~= lastWx or Win.y ~= lastWy) and not Win.dragging then
+                lastWx, lastWy = Win.x, Win.y
+                C.wx, C.wy = Win.x, Win.y
+                ST.dirty = true
+            end
+            local acc = pct(ST.perfect, ST.shots)
+            if Win.visible and not ST.busy then
+                local at = Win.activeTab
+                if at == TABS.main then
+                    setL(UIL.live1, string.format("Status: %s   Key: %s", C.on and "ON" or "OFF", C.keyName))
+                    setL(UIL.live2, string.format("Target: %s @ %d%%", C.target, C.chance))
+                    setL(UIL.live3, string.format("Hit rate: %s   Perfect: %s", pct(ST.hits, ST.attempts), acc))
+                elseif at == TABS.stats then
+                    setL(UIL.r1, string.format("Shots: %d   Skipped: %d", ST.shots, ST.skipped))
+                    setL(UIL.r2, string.format("Perfect: %d  (%s)", ST.perfect, acc))
+                    setL(UIL.r3, string.format("Great: %d   Good: %d", ST.great, ST.goodOnly))
+                    setL(UIL.r4, string.format("Early: %d   Late: %d", ST.early, ST.late))
+                    setL(UIL.r5, string.format("Target hit: %d / %d  (%s)", ST.hits, ST.attempts, pct(ST.hits, ST.attempts)))
+                    setL(UIL.r6, string.format("Perfect streak: %d", ST.streak))
+                    setL(UIL.l1, string.format("Wanted: %s  (%+.0f ms)", ST.lastTarget, ST.lastExtra))
+                    setL(UIL.l2, string.format("Got: %s   D %.1f studs", ST.last, ST.lastD))
+                    setL(UIL.l3, string.format("Release %.0f ms  (aim %.0f)  %s", ST.lastDelay, ST.lastPred, ST.lastMode))
+                    setL(UIL.m1, "Meter: " .. meterStatus())
+                    setL(UIL.m2, string.format("Game frame %.1f ms   Loop %.1f ms%s", (BAR.gdt or 0) * 1000, ST.step * 1000, ST.fine and "  fine" or ""))
+                    setL(UIL.m3, string.format("Time center %.1f ms   Hoops %d", timeCenter(), ST.hoops))
+                    setL(UIL.m4, string.format("Great  -%.0f / +%.0f ms", GDE[2], GDL[2]))
+                    setL(UIL.m5, string.format("Good  -%.0f / +%.0f ms", GDE[3], GDL[3]))
+                end
+            end
+            if UIL.wm and C.wm then
+                local s = string.format("Basketball  |  %s  |  %s %d%%  |  {fps} fps", C.on and "ON" or "OFF", C.target, C.chance)
+                if s ~= lastWm then
+                    lastWm = s
+                    UIL.wm:Set(s)
+                end
+            end
+        end
+        task.wait(0.2)
+    end
+end)
+
+if Lib then
+    toast("Loaded" .. (loaded and " (data restored)" or "") .. "  |  " .. tostring(C.menuKey) .. " = menu", 3)
+end
