@@ -1,51 +1,36 @@
 local RunService = game:GetService("RunService")
-local HttpService = nil
+local HttpService, UIS, LP = nil, nil, nil
 pcall(function() HttpService = game:GetService("HttpService") end)
-local UIS = nil
 pcall(function() UIS = game:GetService("UserInputService") end)
-local LP = nil
 pcall(function() LP = game:GetService("Players").LocalPlayer end)
 
 local QuantomLib = {}
 QuantomLib.__index = QuantomLib
-QuantomLib._version = "2.0.0"
+QuantomLib._version = "2.1.0"
 QuantomLib._author = "quantom.gg"
 QuantomLib.flags = {}
 
-local Theme = {
-    bg = Color3.fromRGB(15, 17, 22),
-    titlebar = Color3.fromRGB(20, 22, 28),
-    tab_bg = Color3.fromRGB(18, 20, 26),
-    tab_active = Color3.fromRGB(25, 28, 36),
-    tab_text = Color3.fromRGB(120, 125, 135),
-    tab_text_active = Color3.fromRGB(75, 220, 200),
-    section_bg = Color3.fromRGB(22, 25, 32),
-    section_border = Color3.fromRGB(35, 38, 48),
-    section_title = Color3.fromRGB(200, 205, 215),
-    accent = Color3.fromRGB(75, 220, 200),
-    accent_dark = Color3.fromRGB(45, 140, 130),
-    text = Color3.fromRGB(180, 185, 195),
-    text_hover = Color3.fromRGB(228, 232, 240),
-    text_dim = Color3.fromRGB(100, 105, 115),
-    toggle_off = Color3.fromRGB(40, 44, 55),
-    toggle_on = Color3.fromRGB(75, 220, 200),
-    knob = Color3.fromRGB(235, 240, 245),
-    slider_bg = Color3.fromRGB(35, 38, 48),
-    slider_fill = Color3.fromRGB(75, 220, 200),
-    dropdown_bg = Color3.fromRGB(28, 31, 40),
-    dropdown_item = Color3.fromRGB(32, 35, 44),
-    dropdown_hover = Color3.fromRGB(38, 42, 52),
-    keybind_bg = Color3.fromRGB(35, 38, 48),
-    button_bg = Color3.fromRGB(30, 33, 43),
-    button_hover = Color3.fromRGB(40, 44, 56),
-    separator = Color3.fromRGB(35, 38, 48),
-    shadow = Color3.fromRGB(5, 5, 8),
-    notify_bg = Color3.fromRGB(20, 22, 28),
+local DEF = {
+    bg = { 13, 14, 19 }, titlebar = { 17, 18, 24 }, tab_bg = { 15, 16, 21 }, tab_active = { 26, 29, 38 },
+    tab_text = { 115, 120, 133 }, tab_text_active = { 75, 220, 200 },
+    section_bg = { 19, 21, 28 }, section_border = { 34, 37, 48 }, section_title = { 210, 214, 222 },
+    accent = { 75, 220, 200 }, accent_dark = { 45, 140, 130 },
+    text = { 186, 191, 202 }, text_hover = { 236, 239, 245 }, text_dim = { 108, 113, 126 },
+    toggle_off = { 42, 46, 58 }, toggle_on = { 75, 220, 200 }, knob = { 240, 243, 248 },
+    slider_bg = { 36, 39, 50 }, slider_fill = { 75, 220, 200 },
+    dropdown_bg = { 24, 26, 34 }, dropdown_item = { 22, 24, 31 }, dropdown_hover = { 36, 39, 50 },
+    keybind_bg = { 30, 33, 43 }, button_bg = { 27, 30, 39 }, button_hover = { 38, 42, 54 },
+    separator = { 32, 35, 45 }, shadow = { 0, 0, 0 }, notify_bg = { 18, 19, 25 },
+    success = { 90, 220, 140 }, warning = { 255, 170, 60 }, error = { 240, 80, 90 }
 }
+local Theme, TC = {}, {}
+for k, v in pairs(DEF) do
+    Theme[k] = Color3.fromRGB(v[1], v[2], v[3])
+    TC[k] = { v[1], v[2], v[3] }
+end
 QuantomLib.Theme = Theme
 
-local VK = {}
-local VK_ORDER = {}
+local VK, VK_ORDER = {}, {}
 local function _vk(name, code)
     VK[name] = code
     VK_ORDER[#VK_ORDER + 1] = name
@@ -87,10 +72,14 @@ end
 local S = {
     drawings = {}, windows = {}, conns = {}, notifs = {}, flagEls = {},
     dropdown = nil, listening = nil, listenArm = false, slider = nil, dragWin = nil,
-    kprev = {}, kdown = {}, zBase = 10, zTop = 9000, alive = true, lastT = 0,
-    vw = 1920, vh = 1080, fps = 60, wm = nil, errShown = false, mouseFn = nil
+    kprev = {}, kstate = {}, binds = {}, bindEls = {}, bindsDirty = true, bindT = 0,
+    zBase = 10, zTop = 9000, alive = true, lastT = 0, vw = 1920, vh = 1080, vpT = -1,
+    fps = 60, wm = nil, errShown = false, mouseFn = nil, posFn = nil,
+    dirty = true, anim = false, paused = false, fullT = 0,
+    hoverEl = nil, hoverT = 0, tip = nil
 }
 local M = { x = 0, y = 0, down = false, click = false }
+local CA = 1
 
 local FONT = nil
 pcall(function() FONT = Drawing.Fonts.UI end)
@@ -106,16 +95,54 @@ local function _round(v, d)
     return math.floor(v * m + 0.5) / m
 end
 
-local function _raw(d, k, v)
-    pcall(function() d[k] = v end)
+local function _ease(cur, target, speed, dt)
+    local d = target - cur
+    if d > -0.002 and d < 0.002 then return target, false end
+    return cur + d * (1 - math.exp(-speed * dt)), true
 end
+
+local CC, CCn = {}, 0
+local function _rgb(r, g, b)
+    r, g, b = math.floor(r + 0.5), math.floor(g + 0.5), math.floor(b + 0.5)
+    local key = r * 65536 + g * 256 + b
+    local c = CC[key]
+    if c then return c end
+    if CCn > 4096 then CC, CCn = {}, 0 end
+    c = Color3.fromRGB(r, g, b)
+    CC[key] = c
+    CCn = CCn + 1
+    return c
+end
+
+local function _mix(k1, k2, t)
+    if t <= 0.02 then return Theme[k1] end
+    if t >= 0.98 then return Theme[k2] end
+    local a, b = TC[k1], TC[k2]
+    if not a or not b then return t < 0.5 and Theme[k1] or Theme[k2] end
+    t = math.floor(t * 24 + 0.5) / 24
+    return _rgb(a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t)
+end
+
+local function _rd(c) return c.R, c.G, c.B end
+local function _toRGB(c)
+    local ok, r, g, b = pcall(_rd, c)
+    if ok and type(r) == "number" and type(g) == "number" and type(b) == "number" then
+        if r <= 1 and g <= 1 and b <= 1 then return { r * 255, g * 255, b * 255 } end
+        return { r, g, b }
+    end
+    return nil
+end
+
+local function _setp(d, k, v) d[k] = v end
+local function _raw(d, k, v) pcall(_setp, d, k, v) end
 
 local function _set(w, k, v)
     if not w or w.dead then return end
-    if w.c[k] == v then return end
-    w.c[k] = v
+    local c = w.c
+    if c[k] == v then return end
+    c[k] = v
     local d = w.d
-    if k == "Opacity" or k == "Transparency" then
+    if k == "Opacity" then
         _raw(d, "Transparency", v)
     elseif k == "Rounding" then
         _raw(d, "Corner", v)
@@ -134,42 +161,82 @@ end
 local function _pos(w, x, y)
     if not w or w.dead then return end
     x, y = math.floor(x + 0.5), math.floor(y + 0.5)
-    if w.c.px == x and w.c.py == y then return end
-    w.c.px, w.c.py = x, y
+    local c = w.c
+    if c.px == x and c.py == y then return end
+    c.px, c.py = x, y
     _raw(w.d, "Position", Vector2.new(x, y))
 end
 
 local function _size(w, x, y)
     if not w or w.dead then return end
     x, y = math.max(0, math.floor(x + 0.5)), math.max(0, math.floor(y + 0.5))
-    if w.c.sx == x and w.c.sy == y then return end
-    w.c.sx, w.c.sy = x, y
+    local c = w.c
+    if c.sx == x and c.sy == y then return end
+    c.sx, c.sy = x, y
     _raw(w.d, "Size", Vector2.new(x, y))
 end
 
-local function _vis(w, v)
-    _set(w, "Visible", v and true or false)
+local function _ln(w, x1, y1, x2, y2)
+    if not w or w.dead then return end
+    local c = w.c
+    if c.l1 ~= x1 or c.l2 ~= y1 then
+        c.l1, c.l2 = x1, y1
+        _raw(w.d, "From", Vector2.new(x1, y1))
+    end
+    if c.l3 ~= x2 or c.l4 ~= y2 then
+        c.l3, c.l4 = x2, y2
+        _raw(w.d, "To", Vector2.new(x2, y2))
+    end
 end
 
-local function _new(list, cls, props)
-    local ok, d = pcall(function() return Drawing.new(cls) end)
+local function _vis(w, v)
+    if not w or w.dead then return end
+    v = v and true or false
+    if w.c.Visible == v then return end
+    w.c.Visible = v
+    _raw(w.d, "Visible", v)
+end
+
+local function _op(w, base)
+    _set(w, "Opacity", base * CA)
+end
+
+local function _box(w, x, y, wd, ht, color, base)
+    _pos(w, x, y)
+    _size(w, wd, ht)
+    _set(w, "Color", color)
+    _set(w, "Opacity", (base or 1) * CA)
+    _vis(w, true)
+end
+
+local function _txt(w, x, y, text, color, base)
+    _set(w, "Text", text)
+    _pos(w, x, y)
+    _set(w, "Color", color)
+    _set(w, "Opacity", (base or 1) * CA)
+    _vis(w, true)
+end
+
+local function _newDraw(cls) return Drawing.new(cls) end
+
+local function _new(list, cls, props, win)
+    local ok, d = pcall(_newDraw, cls)
     if not ok or not d then return nil end
     local w = { d = d, c = {}, cls = cls }
     _raw(d, "Visible", false)
     w.c.Visible = false
     if cls == "Text" then
-        _set(w, "Outline", true)
+        _set(w, "Outline", false)
         _set(w, "Center", false)
         _set(w, "TextSize", 13)
         if FONT ~= nil then _set(w, "Font", FONT) end
+    elseif cls == "Line" then
+        _set(w, "Thickness", 1.5)
     end
-    for k, v in pairs(props) do
-        if k == "Position" then _pos(w, v[1], v[2])
-        elseif k == "Size" and cls ~= "Text" then _size(w, v[1], v[2])
-        else _set(w, k, v) end
-    end
+    for k, v in pairs(props) do _set(w, k, v) end
     S.drawings[#S.drawings + 1] = w
     if list then list[#list + 1] = w end
+    if win then win._every[#win._every + 1] = w end
     return w
 end
 
@@ -179,17 +246,18 @@ local function _kill(w)
     pcall(function() w.d:Remove() end)
 end
 
+local function _rdTB(d) return d.TextBounds end
 local function _tw(w, s, size)
     if w and not w.dead and w.tb == nil then
-        local ok, b = pcall(function() return w.d.TextBounds end)
+        local ok, b = pcall(_rdTB, w.d)
         if ok and b and b.X and b.X > 0 then w.tb = b.X else w.tb = false end
     end
     if w and w.tb then return w.tb end
-    return #tostring(s) * (size or 13) * 0.52
+    return #tostring(s) * (size or 13) * 0.56
 end
 
-local function _hideAll(list)
-    for _, w in ipairs(list) do _vis(w, false) end
+local function _hideList(list)
+    for i = 1, #list do _vis(list[i], false) end
 end
 
 local function _kd(code)
@@ -204,17 +272,17 @@ local function _active()
     return true
 end
 
+local function _md1() return isleftpressed() end
+local function _md2() return ismouse1pressed() end
+local function _md3() return iskeypressed(0x01) end
+local MD = { _md1, _md2, _md3 }
+
 local function _mouseDown()
     if S.mouseFn then
         local ok, v = pcall(S.mouseFn)
-        if ok then return v == true end
+        if ok and type(v) == "boolean" then return v end
     end
-    local cands = {
-        function() return isleftpressed() end,
-        function() return ismouse1pressed() end,
-        function() return iskeypressed(0x01) end
-    }
-    for _, f in ipairs(cands) do
+    for _, f in ipairs(MD) do
         local ok, v = pcall(f)
         if ok and type(v) == "boolean" then
             S.mouseFn = f
@@ -225,23 +293,41 @@ local function _mouseDown()
 end
 
 local mouseObj = nil
+local function _mlUIS() return UIS:GetMouseLocation() end
+local function _mlObj() return mouseObj.X, mouseObj.Y end
+local function _getMouse() mouseObj = LP:GetMouse() end
+
 local function _mousePos()
-    if UIS then
-        local ok, p = pcall(function() return UIS:GetMouseLocation() end)
+    if S.posFn == 1 then
+        local ok, p = pcall(_mlUIS)
         if ok and p then return p.X, p.Y end
+    elseif S.posFn == 2 then
+        local ok, x, y = pcall(_mlObj)
+        if ok and x then return x, y end
+    end
+    if UIS then
+        local ok, p = pcall(_mlUIS)
+        if ok and p and p.X then
+            S.posFn = 1
+            return p.X, p.Y
+        end
     end
     if LP then
-        if not mouseObj then pcall(function() mouseObj = LP:GetMouse() end) end
+        if not mouseObj then pcall(_getMouse) end
         if mouseObj then
-            local ok, x, y = pcall(function() return mouseObj.X, mouseObj.Y end)
-            if ok and x then return x, y end
+            local ok, x, y = pcall(_mlObj)
+            if ok and x then
+                S.posFn = 2
+                return x, y
+            end
         end
     end
     return M.x, M.y
 end
 
+local function _rdVP() return workspace.CurrentCamera.ViewportSize end
 local function _viewport()
-    local ok, v = pcall(function() return workspace.CurrentCamera.ViewportSize end)
+    local ok, v = pcall(_rdVP)
     if ok and v and v.X and v.X > 0 then return v.X, v.Y end
     return S.vw, S.vh
 end
@@ -261,6 +347,7 @@ end
 local function _closeDD()
     if S.dropdown then S.dropdown.open = false end
     S.dropdown = nil
+    S.dirty = true
 end
 
 local ElMT = {}
@@ -269,7 +356,11 @@ ElMT.__index = ElMT
 function ElMT:Set(v, silent)
     local t = self.type
     if t == "label" then
-        self.text = tostring(v)
+        v = tostring(v)
+        if self.text ~= v then
+            self.text = v
+            S.dirty = true
+        end
         return self
     elseif t == "toggle" then
         v = v and true or false
@@ -279,12 +370,14 @@ function ElMT:Set(v, silent)
         v = tostring(v)
     elseif t == "keybind" then
         v = _normKey(v)
+        S.bindsDirty = true
     else
         return self
     end
     local changed = self.value ~= v
     self.value = v
     if self.flag then QuantomLib.flags[self.flag] = v end
+    S.dirty = true
     if changed and not silent then _fire(self, v) end
     return self
 end
@@ -296,16 +389,25 @@ end
 
 function ElMT:SetText(t)
     if self.type == "label" then self.text = tostring(t) else self.name = tostring(t) end
+    S.dirty = true
+    return self
+end
+
+function ElMT:SetTip(t)
+    self.tip = t and tostring(t) or nil
     return self
 end
 
 function ElMT:SetVisible(b)
     self.visible = b and true or false
+    S.dirty = true
     return self
 end
 
 function ElMT:SetKeybind(k)
     self.keybind = _normKey(k)
+    S.bindsDirty = true
+    S.dirty = true
     return self
 end
 
@@ -323,40 +425,45 @@ function ElMT:SetOptions(opts, keep)
         for _, o in ipairs(self.options) do if o == self.value then found = true break end end
         if not found then self:Set(self.options[1] or "None") end
     end
+    S.dirty = true
     return self
 end
 
 local function _mk(el, cls, props)
-    return _new(el._all, cls, props)
+    return _new(el._all, cls, props, el.window)
 end
 
-local function _el(sec, t)
+local function _el(sec, t, c)
     t.section = sec
     t.window = sec.tab.window
     t.visible = true
     t._all = {}
     t.anim = 0
+    t.hv = 0
+    t.tip = c and c.tip and tostring(c.tip) or nil
     setmetatable(t, ElMT)
     sec.elements[#sec.elements + 1] = t
     if t.flag then
         QuantomLib.flags[t.flag] = t.value
         S.flagEls[t.flag] = t
     end
+    S.bindsDirty = true
+    S.dirty = true
     return t
 end
 
 local function _h(el)
     local t = el.type
-    if t == "toggle" then return 22
-    elseif t == "slider" then return 36
-    elseif t == "dropdown" then return 44
-    elseif t == "keybind" then return 22
-    elseif t == "button" then return 27
-    elseif t == "separator" then return 10
+    if t == "toggle" then return 26
+    elseif t == "slider" then return 40
+    elseif t == "dropdown" then return 48
+    elseif t == "keybind" then return 26
+    elseif t == "button" then return 30
+    elseif t == "separator" then return 12
     elseif t == "label" then
         local n = 1
         for _ in string.gmatch(el.text or "", "\n") do n = n + 1 end
-        return 4 + n * 15
+        return 6 + n * 16
     end
     return 0
 end
@@ -370,13 +477,13 @@ function SecMT:Toggle(c)
         type = "toggle", name = tostring(c.name or ""), value = c.default and true or false,
         callback = c.callback, flag = c.flag, keybindCallback = c.keybindCallback,
         keybind = (c.keybind ~= nil or c.bindable) and _normKey(c.keybind) or nil
-    })
+    }, c)
     el.anim = el.value and 1 or 0
     local z = self.z + 10
-    el._text = _mk(el, "Text", { Color = Theme.text, ZIndex = z + 1 })
-    el._kb = _mk(el, "Text", { Color = Theme.text_dim, TextSize = 12, ZIndex = z + 1 })
-    el._track = _mk(el, "Square", { Filled = true, Color = Theme.toggle_off, Rounding = 6, ZIndex = z })
-    el._knob = _mk(el, "Square", { Filled = true, Color = Theme.knob, Rounding = 4, ZIndex = z + 1 })
+    el._text = _mk(el, "Text", { ZIndex = z + 2 })
+    el._kb = _mk(el, "Text", { TextSize = 12, ZIndex = z + 2 })
+    el._track = _mk(el, "Square", { Filled = true, Rounding = 7, ZIndex = z })
+    el._knob = _mk(el, "Square", { Filled = true, Rounding = 5, ZIndex = z + 1 })
     return el
 end
 
@@ -388,15 +495,17 @@ function SecMT:Slider(c)
         type = "slider", name = tostring(c.name or ""), min = mn, max = mx,
         decimals = math.max(0, math.floor(tonumber(c.decimals) or 2)), suffix = c.suffix or "",
         callback = c.callback, flag = c.flag, value = mn
-    })
+    }, c)
     el.value = _round(_clamp(tonumber(c.default) or mn, mn, mx), el.decimals)
+    el.pv = (el.value - mn) / (mx - mn)
+    el.kv = 0
     if el.flag then QuantomLib.flags[el.flag] = el.value end
     local z = self.z + 10
-    el._text = _mk(el, "Text", { Color = Theme.text, ZIndex = z + 1 })
-    el._val = _mk(el, "Text", { Color = Theme.accent, ZIndex = z + 1 })
-    el._bg = _mk(el, "Square", { Filled = true, Color = Theme.slider_bg, Rounding = 3, ZIndex = z })
-    el._fill = _mk(el, "Square", { Filled = true, Color = Theme.slider_fill, Rounding = 3, ZIndex = z + 1 })
-    el._knob = _mk(el, "Square", { Filled = true, Color = Theme.knob, Rounding = 5, ZIndex = z + 2 })
+    el._text = _mk(el, "Text", { ZIndex = z + 2 })
+    el._val = _mk(el, "Text", { ZIndex = z + 2 })
+    el._bg = _mk(el, "Square", { Filled = true, Rounding = 3, ZIndex = z })
+    el._fill = _mk(el, "Square", { Filled = true, Rounding = 3, ZIndex = z + 1 })
+    el._knob = _mk(el, "Square", { Filled = true, Rounding = 6, ZIndex = z + 2 })
     return el
 end
 
@@ -407,16 +516,19 @@ function SecMT:Dropdown(c)
     local el = _el(self, {
         type = "dropdown", name = tostring(c.name or ""), options = opts,
         value = tostring(c.default or opts[1] or "None"), callback = c.callback, flag = c.flag, open = false
-    })
+    }, c)
+    el.oa = 0
     local z = self.z + 10
-    el._label = _mk(el, "Text", { Color = Theme.text_dim, TextSize = 12, ZIndex = z })
-    el._bg = _mk(el, "Square", { Filled = true, Color = Theme.dropdown_bg, Rounding = 3, ZIndex = z + 1 })
-    el._border = _mk(el, "Square", { Filled = false, Thickness = 1, Color = Theme.section_border, Rounding = 3, ZIndex = z + 2 })
-    el._val = _mk(el, "Text", { Color = Theme.text, ZIndex = z + 3 })
-    el._arrow = _mk(el, "Text", { Color = Theme.text_dim, ZIndex = z + 3 })
+    el._label = _mk(el, "Text", { TextSize = 12, ZIndex = z })
+    el._bg = _mk(el, "Square", { Filled = true, Rounding = 5, ZIndex = z + 1 })
+    el._border = _mk(el, "Square", { Filled = false, Thickness = 1, Rounding = 5, ZIndex = z + 2 })
+    el._val = _mk(el, "Text", { ZIndex = z + 3 })
+    el._ch1 = _mk(el, "Line", { ZIndex = z + 3 })
+    el._ch2 = _mk(el, "Line", { ZIndex = z + 3 })
     el._opts = {}
     el._ovAll = {}
-    el._ovBorder = _new(el._ovAll, "Square", { Filled = false, Thickness = 1, Color = Theme.section_border, Rounding = 3, ZIndex = S.zTop + 3 })
+    el._ovBg = _new(el._ovAll, "Square", { Filled = true, Rounding = 5, ZIndex = S.zTop }, el.window)
+    el._ovBorder = _new(el._ovAll, "Square", { Filled = false, Thickness = 1, Rounding = 5, ZIndex = S.zTop + 4 }, el.window)
     return el
 end
 
@@ -425,36 +537,37 @@ function SecMT:Keybind(c)
     local el = _el(self, {
         type = "keybind", name = tostring(c.name or ""), value = _normKey(c.default),
         callback = c.callback, pressed = c.pressed, flag = c.flag
-    })
+    }, c)
     local z = self.z + 10
-    el._text = _mk(el, "Text", { Color = Theme.text, ZIndex = z + 1 })
-    el._bg = _mk(el, "Square", { Filled = true, Color = Theme.keybind_bg, Rounding = 3, ZIndex = z })
-    el._val = _mk(el, "Text", { Color = Theme.text_dim, TextSize = 12, Center = true, ZIndex = z + 1 })
+    el._text = _mk(el, "Text", { ZIndex = z + 1 })
+    el._bg = _mk(el, "Square", { Filled = true, Rounding = 5, ZIndex = z })
+    el._border = _mk(el, "Square", { Filled = false, Thickness = 1, Rounding = 5, ZIndex = z + 1 })
+    el._val = _mk(el, "Text", { TextSize = 12, Center = true, ZIndex = z + 2 })
     return el
 end
 
 function SecMT:Button(c)
     if type(c) == "string" then c = { name = c } end
     c = c or {}
-    local el = _el(self, { type = "button", name = tostring(c.name or ""), callback = c.callback, flash = 0 })
+    local el = _el(self, { type = "button", name = tostring(c.name or ""), callback = c.callback, flash = 0 }, c)
     local z = self.z + 10
-    el._bg = _mk(el, "Square", { Filled = true, Color = Theme.button_bg, Rounding = 3, ZIndex = z })
-    el._border = _mk(el, "Square", { Filled = false, Thickness = 1, Color = Theme.section_border, Rounding = 3, ZIndex = z + 1 })
-    el._text = _mk(el, "Text", { Color = Theme.text, Center = true, ZIndex = z + 2 })
+    el._bg = _mk(el, "Square", { Filled = true, Rounding = 5, ZIndex = z })
+    el._border = _mk(el, "Square", { Filled = false, Thickness = 1, Rounding = 5, ZIndex = z + 1 })
+    el._text = _mk(el, "Text", { Center = true, ZIndex = z + 2 })
     return el
 end
 
 function SecMT:Separator()
     local el = _el(self, { type = "separator" })
-    el._line = _mk(el, "Square", { Filled = true, Color = Theme.separator, Opacity = 0.6, ZIndex = self.z + 10 })
+    el._line = _mk(el, "Square", { Filled = true, ZIndex = self.z + 10 })
     return el
 end
 
 function SecMT:Label(c)
     if type(c) == "string" then c = { text = c } end
     c = c or {}
-    local el = _el(self, { type = "label", text = tostring(c.text or ""), color = c.color, tsize = c.size or 12 })
-    el._text = _mk(el, "Text", { Color = c.color or Theme.text_dim, TextSize = el.tsize, ZIndex = self.z + 11 })
+    local el = _el(self, { type = "label", text = tostring(c.text or ""), color = c.color, tsize = c.size or 12 }, c)
+    el._text = _mk(el, "Text", { TextSize = el.tsize, ZIndex = self.z + 11 })
     return el
 end
 
@@ -464,15 +577,18 @@ TabMT.__index = TabMT
 function TabMT:Section(cfg, side)
     if type(cfg) ~= "table" then cfg = { name = cfg, side = side } end
     local sd = string.lower(tostring(cfg.side or "left"))
+    local win = self.window
     local sec = setmetatable({
         name = tostring(cfg.name or ""), side = (sd == "right") and "right" or "left",
-        tab = self, elements = {}, _all = {}, z = self.window.z + 20
+        tab = self, elements = {}, _all = {}, z = win.z + 20
     }, SecMT)
-    sec._bg = _new(sec._all, "Square", { Filled = true, Color = Theme.section_bg, Opacity = 0.95, Rounding = 4, ZIndex = sec.z })
-    sec._border = _new(sec._all, "Square", { Filled = false, Thickness = 1, Color = Theme.section_border, Opacity = 0.6, Rounding = 4, ZIndex = sec.z + 1 })
-    sec._title = _new(sec._all, "Text", { Color = Theme.section_title, ZIndex = sec.z + 2 })
-    sec._line = _new(sec._all, "Square", { Filled = true, Color = Theme.accent, Opacity = 0.55, ZIndex = sec.z + 2 })
+    sec._bg = _new(sec._all, "Square", { Filled = true, Rounding = 6, ZIndex = sec.z }, win)
+    sec._border = _new(sec._all, "Square", { Filled = false, Thickness = 1, Rounding = 6, ZIndex = sec.z + 1 }, win)
+    sec._mark = _new(sec._all, "Square", { Filled = true, Rounding = 1, ZIndex = sec.z + 2 }, win)
+    sec._title = _new(sec._all, "Text", { ZIndex = sec.z + 2 }, win)
+    sec._line = _new(sec._all, "Square", { Filled = true, ZIndex = sec.z + 2 }, win)
     self.sections[#self.sections + 1] = sec
+    S.dirty = true
     return sec
 end
 
@@ -491,9 +607,10 @@ function QuantomLib.new(cfg)
     self.y = cfg.y or 100
     self.width = cfg.width or 620
     self.height = cfg.height or 420
-    self.minHeight = cfg.minHeight or 140
+    self.minHeight = cfg.minHeight or 150
     if cfg.autoSize ~= nil then self.autoSize = cfg.autoSize and true or false else self.autoSize = cfg.height == nil end
     self.visible = cfg.visible ~= false
+    self.A = self.visible and 0 or 0
     self.toggleKey = cfg.toggleKey ~= nil and _normKey(cfg.toggleKey) or "Insert"
     self.tabs = {}
     self.activeTab = nil
@@ -501,59 +618,92 @@ function QuantomLib.new(cfg)
     self.dragOX, self.dragOY = 0, 0
     self.H = self.height
     self._all = {}
+    self._every = {}
+    self.pillX, self.pillW = nil, nil
     local z = S.zBase
     S.zBase = S.zBase + 100
     self.z = z
     local L = self._all
-    self._shadow = _new(L, "Square", { Filled = true, Color = Theme.shadow, Opacity = 0.5, Rounding = 6, ZIndex = z })
-    self._bg = _new(L, "Square", { Filled = true, Color = Theme.bg, Opacity = 0.98, Rounding = 4, ZIndex = z + 1 })
-    self._border = _new(L, "Square", { Filled = false, Thickness = 1, Color = Theme.section_border, Opacity = 0.6, Rounding = 4, ZIndex = z + 2 })
-    self._titlebar = _new(L, "Square", { Filled = true, Color = Theme.titlebar, Rounding = 4, ZIndex = z + 3 })
-    self._titlefix = _new(L, "Square", { Filled = true, Color = Theme.titlebar, ZIndex = z + 3 })
-    self._title = _new(L, "Text", { Color = Theme.accent, TextSize = 14, ZIndex = z + 5 })
-    self._sub = _new(L, "Text", { Color = Theme.text_dim, TextSize = 12, ZIndex = z + 5 })
-    self._accent = _new(L, "Square", { Filled = true, Color = Theme.accent, Opacity = 0.8, ZIndex = z + 6 })
-    self._tabbar = _new(L, "Square", { Filled = true, Color = Theme.tab_bg, ZIndex = z + 3 })
-    self._tabline = _new(L, "Square", { Filled = true, Color = Theme.accent, ZIndex = z + 8 })
+    self._sh1 = _new(L, "Square", { Filled = true, Rounding = 12, ZIndex = z }, self)
+    self._sh2 = _new(L, "Square", { Filled = true, Rounding = 10, ZIndex = z + 1 }, self)
+    self._sh3 = _new(L, "Square", { Filled = true, Rounding = 9, ZIndex = z + 2 }, self)
+    self._bg = _new(L, "Square", { Filled = true, Rounding = 8, ZIndex = z + 3 }, self)
+    self._border = _new(L, "Square", { Filled = false, Thickness = 1, Rounding = 8, ZIndex = z + 4 }, self)
+    self._titlebar = _new(L, "Square", { Filled = true, Rounding = 8, ZIndex = z + 5 }, self)
+    self._titlefix = _new(L, "Square", { Filled = true, ZIndex = z + 5 }, self)
+    self._title = _new(L, "Text", { TextSize = 15, ZIndex = z + 6 }, self)
+    self._div = _new(L, "Square", { Filled = true, ZIndex = z + 6 }, self)
+    self._sub = _new(L, "Text", { TextSize = 12, ZIndex = z + 6 }, self)
+    self._hint = _new(L, "Text", { TextSize = 12, ZIndex = z + 6 }, self)
+    self._accent = _new(L, "Square", { Filled = true, ZIndex = z + 7 }, self)
+    self._glow = _new(L, "Square", { Filled = true, ZIndex = z + 7 }, self)
+    self._tabbar = _new(L, "Square", { Filled = true, ZIndex = z + 5 }, self)
+    self._pill = _new(L, "Square", { Filled = true, Rounding = 6, ZIndex = z + 8 }, self)
+    self._uline = _new(L, "Square", { Filled = true, Rounding = 1, ZIndex = z + 10 }, self)
     S.windows[#S.windows + 1] = self
+    S.bindsDirty = true
+    S.dirty = true
     return self
 end
 
 function QuantomLib:Tab(name)
-    local tab = setmetatable({ name = tostring(name or "Tab"), window = self, sections = {}, index = #self.tabs + 1, _all = {} }, TabMT)
-    tab._bg = _new(tab._all, "Square", { Filled = true, Color = Theme.tab_active, Opacity = 0, ZIndex = self.z + 10 })
-    tab._text = _new(tab._all, "Text", { Color = Theme.tab_text, Center = true, ZIndex = self.z + 12 })
+    local tab = setmetatable({ name = tostring(name or "Tab"), window = self, sections = {}, index = #self.tabs + 1, _all = {}, hv = 0 }, TabMT)
+    tab._text = _new(tab._all, "Text", { Center = true, ZIndex = self.z + 9 }, self)
     self.tabs[#self.tabs + 1] = tab
     if not self.activeTab then self.activeTab = tab end
+    S.dirty = true
     return tab
 end
 
 function QuantomLib:SetTheme(overrides)
-    for k, v in pairs(overrides or {}) do Theme[k] = v end
+    for k, v in pairs(overrides or {}) do
+        Theme[k] = v
+        TC[k] = _toRGB(v)
+    end
+    S.dirty = true
+end
+
+function QuantomLib:SetAccent(c)
+    local rgb = _toRGB(c)
+    local dark = c
+    if rgb then dark = _rgb(rgb[1] * 0.6, rgb[2] * 0.6, rgb[3] * 0.6) end
+    self:SetTheme({ accent = c, tab_text_active = c, toggle_on = c, slider_fill = c, accent_dark = dark })
 end
 
 function QuantomLib:Toggle()
     self.visible = not self.visible
     if not self.visible then _closeDD() end
+    S.dirty = true
 end
 
 function QuantomLib:SetVisible(b)
     self.visible = b and true or false
     if not self.visible then _closeDD() end
+    S.dirty = true
 end
 
 function QuantomLib:SetTitle(t)
     self.title = tostring(t)
+    S.dirty = true
 end
 
-function QuantomLib:Notify(text, title, duration)
-    local n = { text = tostring(text or ""), title = tostring(title or "Quantom"), dur = tonumber(duration) or 3, t0 = tick(), _all = {}, y = nil }
-    n._bg = _new(n._all, "Square", { Filled = true, Color = Theme.notify_bg, Rounding = 4, ZIndex = S.zTop + 20 })
-    n._border = _new(n._all, "Square", { Filled = false, Thickness = 1, Color = Theme.section_border, Rounding = 4, ZIndex = S.zTop + 21 })
-    n._bar = _new(n._all, "Square", { Filled = true, Color = Theme.accent, ZIndex = S.zTop + 22 })
-    n._prog = _new(n._all, "Square", { Filled = true, Color = Theme.accent, ZIndex = S.zTop + 22 })
-    n._title = _new(n._all, "Text", { Color = Theme.accent, TextSize = 13, ZIndex = S.zTop + 23 })
-    n._text = _new(n._all, "Text", { Color = Theme.text, TextSize = 12, ZIndex = S.zTop + 23 })
+function QuantomLib:SetRenderPaused(b)
+    S.paused = b and true or false
+    if not S.paused then S.dirty = true end
+end
+
+function QuantomLib:Notify(text, title, duration, kind)
+    local n = {
+        text = tostring(text or ""), title = tostring(title or "Quantom"), dur = tonumber(duration) or 3,
+        t0 = tick(), _all = {}, y = nil, kind = (kind == "success" or kind == "warning" or kind == "error") and kind or "accent"
+    }
+    local z = S.zTop + 20
+    n._bg = _new(n._all, "Square", { Filled = true, Rounding = 6, ZIndex = z })
+    n._border = _new(n._all, "Square", { Filled = false, Thickness = 1, Rounding = 6, ZIndex = z + 1 })
+    n._bar = _new(n._all, "Square", { Filled = true, Rounding = 1, ZIndex = z + 2 })
+    n._prog = _new(n._all, "Square", { Filled = true, Rounding = 1, ZIndex = z + 2 })
+    n._title = _new(n._all, "Text", { TextSize = 13, ZIndex = z + 3 })
+    n._text = _new(n._all, "Text", { TextSize = 12, ZIndex = z + 3 })
     S.notifs[#S.notifs + 1] = n
     while #S.notifs > 6 do
         local old = table.remove(S.notifs, 1)
@@ -568,13 +718,14 @@ function QuantomLib:Watermark(text)
         S.wm.visible = true
         return S.wm
     end
-    local wm = { text = tostring(text or "quantom.gg"), visible = true, _all = {} }
-    wm._bg = _new(wm._all, "Square", { Filled = true, Color = Theme.bg, Opacity = 0.95, Rounding = 4, ZIndex = S.zTop + 10 })
-    wm._border = _new(wm._all, "Square", { Filled = false, Thickness = 1, Color = Theme.section_border, Rounding = 4, ZIndex = S.zTop + 11 })
-    wm._bar = _new(wm._all, "Square", { Filled = true, Color = Theme.accent, ZIndex = S.zTop + 12 })
-    wm._text = _new(wm._all, "Text", { Color = Theme.text, TextSize = 13, ZIndex = S.zTop + 12 })
-    function wm:Set(t) self.text = tostring(t) return self end
-    function wm:SetVisible(b) self.visible = b and true or false return self end
+    local wm = { text = tostring(text or "quantom.gg"), visible = true, _all = {}, shown = nil, fpsT = 0 }
+    local z = S.zTop + 10
+    wm._bg = _new(wm._all, "Square", { Filled = true, Rounding = 6, ZIndex = z })
+    wm._border = _new(wm._all, "Square", { Filled = false, Thickness = 1, Rounding = 6, ZIndex = z + 1 })
+    wm._dot = _new(wm._all, "Square", { Filled = true, Rounding = 3, ZIndex = z + 2 })
+    wm._text = _new(wm._all, "Text", { TextSize = 13, ZIndex = z + 2 })
+    function wm:Set(t) self.text = tostring(t) self.fpsT = 0 return self end
+    function wm:SetVisible(b) self.visible = b and true or false self.fpsT = 0 return self end
     S.wm = wm
     return wm
 end
@@ -603,6 +754,7 @@ function QuantomLib:LoadConfig(name)
         if data[flag] ~= nil then el:Set(data[flag]) end
         if el.type == "toggle" and data[flag .. "__key"] ~= nil then el.keybind = _normKey(data[flag .. "__key"]) end
     end
+    S.bindsDirty = true
     return true
 end
 
@@ -627,6 +779,35 @@ function QuantomLib:Destroy()
     S.dropdown, S.listening, S.slider, S.dragWin, S.wm = nil, nil, nil, nil, nil
 end
 
+local function _rebuildBinds(now)
+    local list, els, seen = {}, {}, {}
+    for _, w in ipairs(S.windows) do
+        local tk = w.toggleKey
+        if tk and VK[tk] and not seen[tk] then
+            seen[tk] = true
+            list[#list + 1] = tk
+        end
+        for _, tab in ipairs(w.tabs) do
+            for _, sec in ipairs(tab.sections) do
+                for _, el in ipairs(sec.elements) do
+                    local k = nil
+                    if el.type == "toggle" then k = el.keybind elseif el.type == "keybind" then k = el.value end
+                    if k and VK[k] then
+                        els[#els + 1] = el
+                        if not seen[k] then
+                            seen[k] = true
+                            list[#list + 1] = k
+                        end
+                    end
+                end
+            end
+        end
+    end
+    S.binds, S.bindEls = list, els
+    S.bindsDirty = false
+    S.bindT = now
+end
+
 local function _applyBind(L, v)
     local el = L.el
     if L.field == "keybind" then
@@ -635,20 +816,23 @@ local function _applyBind(L, v)
     else
         el:Set(v)
     end
+    S.bindsDirty = true
+    S.dirty = true
 end
 
-local function _keys(active)
+local function _keys(active, now)
     if S.listening then
         if S.listenArm then
             local any = M.down
             if not any then
-                for _, n in ipairs(VK_ORDER) do
-                    if _kd(VK[n]) then any = true break end
+                for i = 1, #VK_ORDER do
+                    if _kd(VK[VK_ORDER[i]]) then any = true break end
                 end
             end
             if not any then S.listenArm = false end
         else
-            for _, n in ipairs(VK_ORDER) do
+            for i = 1, #VK_ORDER do
+                local n = VK_ORDER[i]
                 if _kd(VK[n]) then
                     local v = n
                     if n == "Escape" or n == "Backspace" then v = "Unbound" end
@@ -662,49 +846,46 @@ local function _keys(active)
         end
         return
     end
-    local used = {}
+    if S.bindsDirty or now - S.bindT > 1 then _rebuildBinds(now) end
+    local st, pv = S.kstate, S.kprev
+    local binds = S.binds
+    for i = 1, #binds do
+        local n = binds[i]
+        st[n] = active and _kd(VK[n]) or false
+    end
     for _, w in ipairs(S.windows) do
-        if VK[w.toggleKey or ""] then used[w.toggleKey] = true end
-        for _, tab in ipairs(w.tabs) do
-            for _, sec in ipairs(tab.sections) do
-                for _, el in ipairs(sec.elements) do
-                    if el.type == "toggle" and el.keybind and VK[el.keybind] then used[el.keybind] = true
-                    elseif el.type == "keybind" and VK[el.value] then used[el.value] = true end
-                end
+        local tk = w.toggleKey
+        if tk and st[tk] and not pv[tk] then
+            w.visible = not w.visible
+            if not w.visible then _closeDD() end
+            S.dirty = true
+        end
+    end
+    local els = S.bindEls
+    for i = 1, #els do
+        local el = els[i]
+        if el.type == "toggle" then
+            local k = el.keybind
+            if k and st[k] and not pv[k] then el:Set(not el.value) end
+        elseif el.type == "keybind" and el.pressed then
+            local k = el.value
+            if st[k] and not pv[k] then
+                local ok, e = pcall(el.pressed, k)
+                if not ok then print("[QuantomLib] keybind error: " .. tostring(e)) end
             end
         end
     end
-    local now = {}
-    for n in pairs(used) do now[n] = active and _kd(VK[n]) or false end
-    local prev = S.kprev
-    S.kprev = now
-    S.kdown = now
-    local function edge(n) return n ~= nil and now[n] == true and prev[n] ~= true end
-    for _, w in ipairs(S.windows) do
-        if edge(w.toggleKey) then
-            w.visible = not w.visible
-            if not w.visible then _closeDD() end
-        end
-        for _, tab in ipairs(w.tabs) do
-            for _, sec in ipairs(tab.sections) do
-                for _, el in ipairs(sec.elements) do
-                    if el.type == "toggle" and el.keybind and edge(el.keybind) then
-                        el:Set(not el.value)
-                    elseif el.type == "keybind" and el.pressed and edge(el.value) then
-                        local ok, e = pcall(el.pressed, el.value)
-                        if not ok then print("[QuantomLib] keybind error: " .. tostring(e)) end
-                    end
-                end
-            end
-        end
+    for i = 1, #binds do
+        local n = binds[i]
+        pv[n] = st[n]
     end
 end
 
 local function _layout(w)
     local x, y, W = w.x, w.y, w.width
     local tab = w.activeTab
-    local cX, cY = x + 8, y + 67
-    local hW = math.floor((W - 16) / 2) - 4
+    local cX, cY = x + 10, y + 79
+    local hW = math.floor((W - 20) / 2) - 4
     local lY, rY = cY, cY
     for _, t in ipairs(w.tabs) do
         if t ~= tab then
@@ -719,22 +900,22 @@ local function _layout(w)
             local isL = sec.side ~= "right"
             local sX = isL and cX or (cX + hW + 8)
             local sY = isL and lY or rY
-            local h = 28
+            local h = 38
             for _, el in ipairs(sec.elements) do
                 if el.visible then h = h + _h(el) end
             end
             h = h + 6
             sec.rx, sec.ry, sec.rw, sec.rh = sX, sY, hW, h
-            local eY = sY + 28
+            local eY = sY + 38
             for _, el in ipairs(sec.elements) do
                 if el.visible then
-                    el.rx, el.ry, el.rw, el.rh = sX + 8, eY, hW - 16, _h(el)
+                    el.rx, el.ry, el.rw, el.rh = sX + 12, eY, hW - 24, _h(el)
                     eY = eY + el.rh
                 else
                     el.rx = nil
                 end
             end
-            if isL then lY = lY + h + 6 else rY = rY + h + 6 end
+            if isL then lY = lY + h + 8 else rY = rY + h + 8 end
         end
     end
     if w.autoSize then
@@ -749,23 +930,31 @@ local function _slideTo(el)
     el:Set(el.min + p * (el.max - el.min))
 end
 
+local function _ddGeom(el)
+    local n = #el.options
+    local listH = n * 24 + 4
+    local oy = el.ry + 47
+    if oy + listH > S.vh - 8 and el.ry + 17 - listH > 8 then oy = el.ry + 17 - listH end
+    return oy, listH
+end
+
 local function _elClick(el)
     local t = el.type
     if t == "toggle" then
-        local kbX = el.rx + el.rw - 34 - (el.kbW or 0)
-        if el.keybind and M.x >= kbX - 4 and M.x <= el.rx + el.rw - 32 then
+        local kbX = el.rx + el.rw - 38 - (el.kbW or 0)
+        if el.keybind and M.x >= kbX - 4 and M.x <= el.rx + el.rw - 36 then
             S.listening = { el = el, field = "keybind" }
             S.listenArm = true
         else
             el:Set(not el.value)
         end
     elseif t == "slider" then
-        if M.y >= el.ry + 12 then
+        if M.y >= el.ry + 16 then
             S.slider = el
             _slideTo(el)
         end
     elseif t == "dropdown" then
-        if M.y >= el.ry + 15 then
+        if M.y >= el.ry + 17 then
             if el.open then
                 _closeDD()
             else
@@ -781,19 +970,20 @@ local function _elClick(el)
         el.flash = 1
         _fire(el)
     end
+    S.dirty = true
 end
 
 local function _windowClick(w)
-    if M.y <= w.y + 30 then
+    if M.y <= w.y + 36 then
         S.dragWin = w
         w.dragging = true
         w.dragOX, w.dragOY = M.x - w.x, M.y - w.y
         return
     end
-    if M.y <= w.y + 59 then
+    if M.y <= w.y + 69 then
         local n = #w.tabs
         if n == 0 then return end
-        local i = _clamp(math.floor((M.x - w.x) / (w.width / n)) + 1, 1, n)
+        local i = _clamp(math.floor((M.x - w.x - 6) / ((w.width - 12) / n)) + 1, 1, n)
         if w.tabs[i] ~= w.activeTab then
             w.activeTab = w.tabs[i]
             _closeDD()
@@ -820,7 +1010,7 @@ local function _input()
         local w = S.dragWin
         if M.down then
             w.x = _clamp(M.x - w.dragOX, 0, math.max(0, S.vw - w.width))
-            w.y = _clamp(M.y - w.dragOY, 0, math.max(0, S.vh - 30))
+            w.y = _clamp(M.y - w.dragOY, 0, math.max(0, S.vh - 36))
         else
             w.dragging = false
             S.dragWin = nil
@@ -838,16 +1028,16 @@ local function _input()
     local dd = S.dropdown
     if dd then
         if dd.rx and dd.window.visible then
-            local oy = dd.ry + 39
+            local oy = _ddGeom(dd)
             for i = 1, #dd.options do
-                if _hit(dd.rx, oy + (i - 1) * 22, dd.rw, 22) then
+                if _hit(dd.rx, oy + 2 + (i - 1) * 24, dd.rw, 24) then
                     _closeDD()
                     dd:Set(dd.options[i])
                     M.click = false
                     return
                 end
             end
-            if not _hit(dd.rx, dd.ry + 15, dd.rw, 24) then
+            if not _hit(dd.rx, dd.ry + 17, dd.rw, 26) then
                 _closeDD()
                 M.click = false
                 return
@@ -868,261 +1058,299 @@ end
 
 local function _drawEl(el, on, dt)
     if not on or not el.rx then
-        _hideAll(el._all)
-        if el._ovAll then _hideAll(el._ovAll) end
-        if el._opts then for _, o in ipairs(el._opts) do _vis(o.bg, false) _vis(o.text, false) end end
-        return
+        _hideList(el._all)
+        if el._ovAll then _hideList(el._ovAll) end
+        el.hv = 0
+        return false
     end
+    local anim = false
+    local a
     local x, y, w = el.rx, el.ry, el.rw
-    local hov = _hit(x, y, w, el.rh) and S.dropdown == nil and S.dragWin == nil
+    local hovTarget = (_hit(x, y, w, el.rh) and S.dropdown == nil and S.dragWin == nil) and 1 or 0
+    el.hv, a = _ease(el.hv, hovTarget, 18, dt)
+    anim = anim or a
+    if hovTarget == 1 and el.tip then
+        if S.hoverEl ~= el then
+            S.hoverEl = el
+            S.hoverT = tick()
+        end
+        anim = true
+    elseif S.hoverEl == el then
+        S.hoverEl = nil
+    end
+    local hv = el.hv
     local t = el.type
     if t == "toggle" then
-        el.anim = el.anim + ((el.value and 1 or 0) - el.anim) * _clamp(dt * 14, 0, 1)
-        local tx, ty = x + w - 26, y + 5
-        _set(el._text, "Text", el.name)
-        _set(el._text, "Color", (hov or el.value) and Theme.text_hover or Theme.text)
-        _pos(el._text, x, y + 4)
-        _vis(el._text, true)
-        _set(el._track, "Color", el.anim > 0.5 and Theme.toggle_on or Theme.toggle_off)
-        _pos(el._track, tx, ty)
-        _size(el._track, 26, 12)
-        _vis(el._track, true)
-        _pos(el._knob, tx + 2 + el.anim * 14, ty + 2)
-        _size(el._knob, 8, 8)
-        _vis(el._knob, true)
+        el.anim, a = _ease(el.anim, el.value and 1 or 0, 16, dt)
+        anim = anim or a
+        local tx, ty = x + w - 30, y + 6
+        _txt(el._text, x, y + 6, el.name, _mix("text", "text_hover", math.max(hv, el.anim * 0.55)))
+        _box(el._track, tx, ty, 30, 14, _mix("toggle_off", "toggle_on", el.anim))
+        _box(el._knob, tx + 2 + el.anim * 16, ty + 2, 10, 10, Theme.knob)
         if el.keybind then
             local listening = S.listening and S.listening.el == el and S.listening.field == "keybind"
-            local s = listening and "[...]" or ("[" .. el.keybind .. "]")
+            local s = listening and "[ ... ]" or ("[" .. el.keybind .. "]")
             _set(el._kb, "Text", s)
-            _set(el._kb, "Color", listening and Theme.accent or Theme.text_dim)
             local kw = _tw(el._kb, s, 12)
             el.kbW = kw
-            _pos(el._kb, tx - 6 - kw, y + 5)
-            _vis(el._kb, true)
+            _txt(el._kb, tx - 8 - kw, y + 7, s, listening and Theme.accent or Theme.text_dim)
         else
             _vis(el._kb, false)
         end
     elseif t == "slider" then
-        local vs = string.format("%." .. el.decimals .. "f", el.value) .. el.suffix
-        _set(el._text, "Text", el.name)
-        _set(el._text, "Color", (hov or S.slider == el) and Theme.text_hover or Theme.text)
-        _pos(el._text, x, y + 2)
-        _vis(el._text, true)
+        local target = (el.value - el.min) / (el.max - el.min)
+        el.pv, a = _ease(el.pv, target, 22, dt)
+        anim = anim or a
+        local active = S.slider == el
+        el.kv, a = _ease(el.kv, (active or hv > 0.5) and 1 or 0, 18, dt)
+        anim = anim or a
+        if el._vsv ~= el.value then
+            el._vsv = el.value
+            el._vs = string.format("%." .. el.decimals .. "f", el.value) .. el.suffix
+        end
+        local vs = el._vs
+        _txt(el._text, x, y + 3, el.name, _mix("text", "text_hover", math.max(hv, active and 1 or 0)))
         _set(el._val, "Text", vs)
-        _pos(el._val, x + w - _tw(el._val, vs, 13), y + 2)
-        _vis(el._val, true)
-        local pct = (el.value - el.min) / (el.max - el.min)
-        _pos(el._bg, x, y + 21)
-        _size(el._bg, w, 5)
-        _vis(el._bg, true)
-        _pos(el._fill, x, y + 21)
-        _size(el._fill, math.max(2, w * pct), 5)
-        _vis(el._fill, true)
-        _set(el._knob, "Color", (hov or S.slider == el) and Theme.accent or Theme.knob)
-        _pos(el._knob, x + w * pct - 5, y + 18)
-        _size(el._knob, 10, 10)
-        _vis(el._knob, true)
+        _txt(el._val, x + w - _tw(el._val, vs, 13), y + 3, vs, Theme.accent)
+        local pct = el.pv
+        _box(el._bg, x, y + 25, w, 6, Theme.slider_bg)
+        _box(el._fill, x, y + 25, math.max(6, w * pct), 6, Theme.slider_fill)
+        local ks = 12 + el.kv * 2
+        _set(el._knob, "Rounding", math.floor(ks / 2))
+        _box(el._knob, x + w * pct - ks / 2, y + 28 - ks / 2, ks, ks, Theme.knob)
     elseif t == "dropdown" then
-        _set(el._label, "Text", el.name)
-        _pos(el._label, x, y + 1)
-        _vis(el._label, true)
-        _pos(el._bg, x, y + 17)
-        _size(el._bg, w, 22)
-        _set(el._bg, "Color", (hov or el.open) and Theme.dropdown_hover or Theme.dropdown_bg)
-        _vis(el._bg, true)
-        _pos(el._border, x, y + 17)
-        _size(el._border, w, 22)
-        _set(el._border, "Color", el.open and Theme.accent_dark or Theme.section_border)
-        _vis(el._border, true)
-        _set(el._val, "Text", el.value)
-        _pos(el._val, x + 7, y + 21)
-        _vis(el._val, true)
-        _set(el._arrow, "Text", el.open and "^" or "v")
-        _pos(el._arrow, x + w - 14, y + 21)
-        _vis(el._arrow, true)
+        el.oa, a = _ease(el.oa, el.open and 1 or 0, 20, dt)
+        anim = anim or a
+        _txt(el._label, x, y + 2, el.name, Theme.text_dim)
+        _box(el._bg, x, y + 17, w, 26, _mix("dropdown_bg", "dropdown_hover", math.max(hv, el.oa)))
+        _box(el._border, x, y + 17, w, 26, _mix("section_border", "accent_dark", math.max(hv * 0.6, el.oa)))
+        _txt(el._val, x + 9, y + 23, el.value, Theme.text_hover)
+        local cx, cy = x + w - 14, y + 30
+        local dy = 2 - el.oa * 4
+        local col = _mix("text_dim", "accent", el.oa)
+        _ln(el._ch1, cx - 4, cy - dy, cx, cy + dy)
+        _ln(el._ch2, cx, cy + dy, cx + 4, cy - dy)
+        _set(el._ch1, "Color", col)
+        _set(el._ch2, "Color", col)
+        _op(el._ch1, 1)
+        _op(el._ch2, 1)
+        _vis(el._ch1, true)
+        _vis(el._ch2, true)
         for i = #el._opts + 1, #el.options do
             el._opts[i] = {
-                bg = _new(el._ovAll, "Square", { Filled = true, Color = Theme.dropdown_item, ZIndex = S.zTop }),
-                text = _new(el._ovAll, "Text", { Color = Theme.text, ZIndex = S.zTop + 1 })
+                bg = _new(el._ovAll, "Square", { Filled = true, Rounding = 4, ZIndex = S.zTop + 1 }, el.window),
+                bar = _new(el._ovAll, "Square", { Filled = true, Rounding = 1, ZIndex = S.zTop + 2 }, el.window),
+                text = _new(el._ovAll, "Text", { ZIndex = S.zTop + 3 }, el.window)
             }
         end
-        local oy = y + 39
-        for i, o in ipairs(el._opts) do
-            local opt = el.options[i]
-            local sv = el.open and opt ~= nil
-            if sv then
-                local ry = oy + (i - 1) * 22
-                local oh = _hit(x, ry, w, 22)
-                _pos(o.bg, x, ry)
-                _size(o.bg, w, 22)
-                _set(o.bg, "Color", oh and Theme.dropdown_hover or Theme.dropdown_item)
-                _set(o.text, "Text", opt)
-                _set(o.text, "Color", opt == el.value and Theme.accent or (oh and Theme.text_hover or Theme.text))
-                _pos(o.text, x + 7, ry + 4)
+        local oy, listH = _ddGeom(el)
+        local shown = el.oa > 0.02 and #el.options > 0
+        if shown then
+            local hcur = listH * el.oa
+            local up = oy < y
+            local top = up and (oy + listH - hcur) or oy
+            _box(el._ovBg, x, top, w, hcur, Theme.dropdown_item, 1)
+            _box(el._ovBorder, x, top, w, hcur, Theme.accent_dark, 0.9)
+            for i, o in ipairs(el._opts) do
+                local opt = el.options[i]
+                local ry = oy + 2 + (i - 1) * 24
+                local inside = opt ~= nil and ry >= top - 1 and ry + 24 <= top + hcur + 1
+                if inside then
+                    local oh = el.open and _hit(x, ry, w, 24)
+                    local sel = opt == el.value
+                    _box(o.bg, x + 3, ry + 1, w - 6, 22, oh and Theme.dropdown_hover or Theme.dropdown_item, oh and 1 or 0)
+                    if sel then _box(o.bar, x + 6, ry + 6, 2, 12, Theme.accent) else _vis(o.bar, false) end
+                    _txt(o.text, x + 14, ry + 5, opt, sel and Theme.accent or (oh and Theme.text_hover or Theme.text))
+                else
+                    _vis(o.bg, false)
+                    _vis(o.bar, false)
+                    _vis(o.text, false)
+                end
             end
-            _vis(o.bg, sv)
-            _vis(o.text, sv)
-        end
-        if el.open and #el.options > 0 then
-            _pos(el._ovBorder, x, oy)
-            _size(el._ovBorder, w, #el.options * 22)
-            _vis(el._ovBorder, true)
         else
-            _vis(el._ovBorder, false)
+            _hideList(el._ovAll)
         end
     elseif t == "keybind" then
         local listening = S.listening and S.listening.el == el and S.listening.field == "value"
         local s = listening and "..." or el.value
-        _set(el._text, "Text", el.name)
-        _set(el._text, "Color", hov and Theme.text_hover or Theme.text)
-        _pos(el._text, x, y + 4)
-        _vis(el._text, true)
+        _txt(el._text, x, y + 6, el.name, _mix("text", "text_hover", hv))
         _set(el._val, "Text", s)
-        _set(el._val, "Color", listening and Theme.accent or Theme.text_dim)
-        local kw = math.max(56, _tw(el._val, s, 12) + 16)
-        _pos(el._bg, x + w - kw, y + 2)
-        _size(el._bg, kw, 18)
-        _set(el._bg, "Color", (hov or listening) and Theme.dropdown_hover or Theme.keybind_bg)
-        _vis(el._bg, true)
-        _pos(el._val, x + w - kw / 2, y + 4)
-        _vis(el._val, true)
+        local kw = math.max(58, _tw(el._val, s, 12) + 20)
+        _box(el._bg, x + w - kw, y + 3, kw, 20, _mix("keybind_bg", "dropdown_hover", math.max(hv, listening and 1 or 0)))
+        _box(el._border, x + w - kw, y + 3, kw, 20, listening and Theme.accent or _mix("section_border", "accent_dark", hv))
+        _txt(el._val, x + w - kw / 2, y + 7, s, listening and Theme.accent or _mix("text_dim", "text_hover", hv))
     elseif t == "button" then
-        el.flash = math.max(0, el.flash - dt * 4)
-        _pos(el._bg, x, y + 2)
-        _size(el._bg, w, 22)
-        _set(el._bg, "Color", el.flash > 0.05 and Theme.accent_dark or (hov and Theme.button_hover or Theme.button_bg))
-        _vis(el._bg, true)
-        _pos(el._border, x, y + 2)
-        _size(el._border, w, 22)
-        _set(el._border, "Color", hov and Theme.accent_dark or Theme.section_border)
-        _vis(el._border, true)
-        _set(el._text, "Text", el.name)
-        _set(el._text, "Color", hov and Theme.text_hover or Theme.text)
-        _pos(el._text, x + w / 2, y + 6)
-        _vis(el._text, true)
+        el.flash, a = _ease(el.flash, 0, 6, dt)
+        anim = anim or a
+        local bg = el.flash > 0.05 and _mix("button_hover", "accent_dark", el.flash) or _mix("button_bg", "button_hover", hv)
+        _box(el._bg, x, y + 3, w, 24, bg)
+        _box(el._border, x, y + 3, w, 24, _mix("section_border", "accent_dark", math.max(hv, el.flash)))
+        _txt(el._text, x + w / 2, y + 8, el.name, _mix("text", "text_hover", hv))
     elseif t == "separator" then
-        _pos(el._line, x, y + 5)
-        _size(el._line, w, 1)
-        _vis(el._line, true)
+        _box(el._line, x, y + 6, w, 1, Theme.separator, 0.8)
     elseif t == "label" then
-        _set(el._text, "Text", el.text)
-        _set(el._text, "Color", el.color or Theme.text_dim)
-        _pos(el._text, x, y + 2)
-        _vis(el._text, true)
+        _set(el._text, "TextSize", el.tsize)
+        _txt(el._text, x, y + 3, el.text, el.color or Theme.text_dim)
     end
+    return anim
 end
 
 local function _drawWin(w, dt)
-    local vis = w.visible
+    local anim, a = false, nil
+    w.A, a = _ease(w.A, w.visible and 1 or 0, 14, dt)
+    anim = anim or a
+    if w.A <= 0.01 and not w.visible then
+        if not w.hiddenAll then
+            _hideList(w._every)
+            w.hiddenAll = true
+        end
+        return anim
+    end
+    w.hiddenAll = false
+    CA = w.A
     local x, y, W, H = w.x, w.y, w.width, w.H
-    _pos(w._shadow, x - 2, y - 2) _size(w._shadow, W + 4, H + 4) _vis(w._shadow, vis)
-    _set(w._bg, "Color", Theme.bg)
-    _pos(w._bg, x, y) _size(w._bg, W, H) _vis(w._bg, vis)
-    _pos(w._border, x, y) _size(w._border, W, H) _vis(w._border, vis)
-    _pos(w._titlebar, x, y) _size(w._titlebar, W, 30) _vis(w._titlebar, vis)
-    _pos(w._titlefix, x, y + 20) _size(w._titlefix, W, 10) _vis(w._titlefix, vis)
-    _set(w._title, "Text", w.title)
-    _set(w._title, "Color", Theme.accent)
-    _pos(w._title, x + 10, y + 8) _vis(w._title, vis)
+    _box(w._sh1, x - 6, y - 6, W + 12, H + 12, Theme.shadow, 0.10)
+    _box(w._sh2, x - 4, y - 4, W + 8, H + 8, Theme.shadow, 0.16)
+    _box(w._sh3, x - 2, y - 2, W + 4, H + 4, Theme.shadow, 0.24)
+    _box(w._bg, x, y, W, H, Theme.bg, 0.98)
+    _box(w._border, x, y, W, H, Theme.section_border, 0.9)
+    _box(w._titlebar, x, y, W, 36, Theme.titlebar)
+    _box(w._titlefix, x, y + 26, W, 10, Theme.titlebar)
+    _txt(w._title, x + 14, y + 10, w.title, Theme.accent)
+    local tw = _tw(w._title, w.title, 15)
     if w.subtitle then
-        _set(w._sub, "Text", w.subtitle)
-        _pos(w._sub, x + 16 + _tw(w._title, w.title, 14), y + 9)
-        _vis(w._sub, vis)
+        _box(w._div, x + 24 + tw, y + 12, 1, 13, Theme.section_border)
+        _txt(w._sub, x + 34 + tw, y + 11, w.subtitle, Theme.text_dim)
     else
+        _vis(w._div, false)
         _vis(w._sub, false)
     end
-    _set(w._accent, "Color", Theme.accent)
-    _pos(w._accent, x, y + 30) _size(w._accent, W, 1) _vis(w._accent, vis)
-    _pos(w._tabbar, x, y + 31) _size(w._tabbar, W, 28) _vis(w._tabbar, vis)
+    local hint = (w.toggleKey and w.toggleKey ~= "Unbound") and ("[" .. w.toggleKey .. "]") or ""
+    _set(w._hint, "Text", hint)
+    _txt(w._hint, x + W - 14 - _tw(w._hint, hint, 12), y + 11, hint, Theme.text_dim, 0.8)
+    _box(w._accent, x, y + 36, W, 1, Theme.accent, 0.9)
+    _box(w._glow, x, y + 37, W, 1, Theme.accent, 0.22)
+    _box(w._tabbar, x, y + 38, W, 31, Theme.tab_bg)
     local n = math.max(#w.tabs, 1)
-    local tW = W / n
+    local tW = (W - 12) / n
     for i, tab in ipairs(w.tabs) do
-        local tx = x + (i - 1) * tW
+        local tx = x + 6 + (i - 1) * tW
         local act = tab == w.activeTab
-        local hov = vis and _hit(tx, y + 31, tW, 28)
-        _pos(tab._bg, tx, y + 31) _size(tab._bg, tW, 28)
-        _set(tab._bg, "Opacity", act and 1 or (hov and 0.5 or 0))
-        _vis(tab._bg, vis)
-        _set(tab._text, "Text", tab.name)
-        _set(tab._text, "Color", act and Theme.tab_text_active or (hov and Theme.text or Theme.tab_text))
-        _pos(tab._text, tx + tW / 2, y + 38)
-        _vis(tab._text, vis)
+        tab.hv, a = _ease(tab.hv, (_hit(tx, y + 38, tW, 31) and not act) and 1 or 0, 18, dt)
+        anim = anim or a
         if act then
-            local target = tx + 6
-            if not w.lineX then w.lineX = target end
-            w.lineX = w.lineX + (target - w.lineX) * _clamp(dt * 16, 0, 1)
+            local tpx, tpw = tx + 4, tW - 8
+            if not w.pillX then w.pillX, w.pillW = tpx, tpw end
+            w.pillX, a = _ease(w.pillX, tpx, 16, dt)
+            anim = anim or a
+            w.pillW, a = _ease(w.pillW, tpw, 16, dt)
+            anim = anim or a
         end
+        _txt(tab._text, tx + tW / 2, y + 46, tab.name, act and Theme.tab_text_active or _mix("tab_text", "text", tab.hv))
         for _, sec in ipairs(tab.sections) do
-            local on = vis and act and sec.rx ~= nil
+            local on = act and sec.rx ~= nil
             if on then
-                _pos(sec._bg, sec.rx, sec.ry) _size(sec._bg, sec.rw, sec.rh) _vis(sec._bg, true)
-                _pos(sec._border, sec.rx, sec.ry) _size(sec._border, sec.rw, sec.rh) _vis(sec._border, true)
-                _set(sec._title, "Text", sec.name)
-                _pos(sec._title, sec.rx + 8, sec.ry + 6) _vis(sec._title, true)
-                _set(sec._line, "Color", Theme.accent)
-                _pos(sec._line, sec.rx + 8, sec.ry + 23) _size(sec._line, 18, 1) _vis(sec._line, true)
+                _box(sec._bg, sec.rx, sec.ry, sec.rw, sec.rh, Theme.section_bg)
+                _box(sec._border, sec.rx, sec.ry, sec.rw, sec.rh, Theme.section_border, 0.9)
+                _box(sec._mark, sec.rx + 12, sec.ry + 12, 3, 12, Theme.accent)
+                _txt(sec._title, sec.rx + 21, sec.ry + 10, sec.name, Theme.section_title)
+                _box(sec._line, sec.rx + 12, sec.ry + 31, sec.rw - 24, 1, Theme.separator, 0.8)
             else
-                _hideAll(sec._all)
+                _hideList(sec._all)
             end
-            for _, el in ipairs(sec.elements) do _drawEl(el, on and el.visible, dt) end
+            for _, el in ipairs(sec.elements) do
+                if _drawEl(el, on and el.visible, dt) then anim = true end
+            end
         end
     end
-    if w.lineX and #w.tabs > 0 then
-        _set(w._tabline, "Color", Theme.accent)
-        _pos(w._tabline, w.lineX, y + 57) _size(w._tabline, tW - 12, 2)
-        _vis(w._tabline, vis)
+    if w.pillX and #w.tabs > 0 then
+        _box(w._pill, w.pillX, y + 42, w.pillW, 23, Theme.accent, 0.13)
+        _box(w._uline, w.pillX + w.pillW / 2 - 9, y + 63, 18, 2, Theme.accent)
     else
-        _vis(w._tabline, false)
+        _vis(w._pill, false)
+        _vis(w._uline, false)
     end
+    CA = 1
+    return anim
 end
 
-local function _drawNotifs(now)
-    local by = S.vh - 14
+local TIP = { _all = {} }
+local function _drawTip(now)
+    local el = S.hoverEl
+    if not TIP._bg then
+        TIP._bg = _new(TIP._all, "Square", { Filled = true, Rounding = 5, ZIndex = S.zTop + 60 })
+        TIP._border = _new(TIP._all, "Square", { Filled = false, Thickness = 1, Rounding = 5, ZIndex = S.zTop + 61 })
+        TIP._text = _new(TIP._all, "Text", { TextSize = 12, ZIndex = S.zTop + 62 })
+    end
+    if not el or not el.tip or not el.rx or not el.window.visible or S.listening or S.dragWin or S.slider or now - S.hoverT < 0.45 then
+        _hideList(TIP._all)
+        return el ~= nil and el.tip ~= nil
+    end
+    local a = _clamp((now - S.hoverT - 0.45) / 0.15, 0, 1)
+    CA = a
+    _set(TIP._text, "Text", el.tip)
+    local tw = _tw(TIP._text, el.tip, 12)
+    local bx = _clamp(M.x + 14, 4, S.vw - tw - 22)
+    local by = _clamp(M.y + 18, 4, S.vh - 28)
+    _box(TIP._bg, bx, by, tw + 16, 22, Theme.notify_bg, 0.97)
+    _box(TIP._border, bx, by, tw + 16, 22, Theme.accent_dark, 0.9)
+    _txt(TIP._text, bx + 8, by + 4, el.tip, Theme.text)
+    CA = 1
+    return a < 1
+end
+
+local function _drawNotifs(now, dt)
+    local by = S.vh - 16
     local i = #S.notifs
     while i >= 1 do
         local n = S.notifs[i]
         local age = now - n.t0
-        if age >= n.dur + 0.3 then
+        if age >= n.dur + 0.35 then
             for _, w in ipairs(n._all) do _kill(w) end
             table.remove(S.notifs, i)
         else
-            local a = _clamp(math.min(age / 0.2, (n.dur + 0.3 - age) / 0.3), 0, 1)
-            local nw = math.max(220, math.min(380, #n.text * 6.6 + 30))
-            local nh = 46
+            local a = _clamp(math.min(age / 0.22, (n.dur + 0.35 - age) / 0.35), 0, 1)
+            local e = 1 - (1 - a) * (1 - a)
+            local nw = math.max(240, math.min(380, #n.text * 6.6 + 40))
+            local nh = 54
             local ty = by - nh
             if n.y == nil then n.y = ty end
-            n.y = n.y + (ty - n.y) * 0.25
-            local nx = S.vw - 14 - nw + (1 - a) * 40
-            _pos(n._bg, nx, n.y) _size(n._bg, nw, nh) _set(n._bg, "Opacity", 0.96 * a) _vis(n._bg, true)
-            _pos(n._border, nx, n.y) _size(n._border, nw, nh) _set(n._border, "Opacity", a) _vis(n._border, true)
-            _pos(n._bar, nx, n.y + 4) _size(n._bar, 2, nh - 8) _set(n._bar, "Opacity", a) _vis(n._bar, true)
+            n.y = n.y + (ty - n.y) * (1 - math.exp(-14 * dt))
+            local nx = S.vw - 16 - nw + (1 - e) * 50
+            CA = a
+            local kc = n.kind == "accent" and Theme.accent or Theme[n.kind]
+            _box(n._bg, nx, n.y, nw, nh, Theme.notify_bg, 0.97)
+            _box(n._border, nx, n.y, nw, nh, Theme.section_border, 1)
+            _box(n._bar, nx + 6, n.y + 10, 3, nh - 20, kc)
             local p = _clamp(1 - age / n.dur, 0, 1)
-            _pos(n._prog, nx + 4, n.y + nh - 3) _size(n._prog, (nw - 8) * p, 2) _set(n._prog, "Opacity", 0.7 * a) _vis(n._prog, true)
-            _set(n._title, "Text", n.title) _pos(n._title, nx + 12, n.y + 7) _set(n._title, "Opacity", a) _vis(n._title, true)
-            _set(n._text, "Text", n.text) _pos(n._text, nx + 12, n.y + 25) _set(n._text, "Opacity", a) _vis(n._text, true)
-            by = n.y - 8
+            _box(n._prog, nx + 16, n.y + nh - 7, (nw - 32) * p, 2, kc, 0.6)
+            _txt(n._title, nx + 18, n.y + 10, n.title, kc)
+            _txt(n._text, nx + 18, n.y + 28, n.text, Theme.text)
+            CA = 1
+            by = n.y - 10
         end
         i = i - 1
     end
 end
 
-local function _drawWatermark()
+local function _drawWatermark(now)
     local wm = S.wm
     if not wm then return end
     if not wm.visible then
-        _hideAll(wm._all)
+        _hideList(wm._all)
         return
     end
-    local s = wm.text
-    s = string.gsub(s, "{fps}", tostring(math.floor(S.fps + 0.5)))
-    local tw = _tw(wm._text, s, 13)
+    if now - wm.fpsT < 0.25 and wm.shown then return end
+    wm.fpsT = now
+    local s = string.gsub(wm.text, "{fps}", tostring(math.floor(S.fps + 0.5)))
+    wm.shown = s
     _set(wm._text, "Text", s)
-    local w = tw + 20
-    _pos(wm._bg, 12, 12) _size(wm._bg, w, 24) _vis(wm._bg, true)
-    _pos(wm._border, 12, 12) _size(wm._border, w, 24) _vis(wm._border, true)
-    _set(wm._bar, "Color", Theme.accent)
-    _pos(wm._bar, 14, 12) _size(wm._bar, w - 4, 2) _vis(wm._bar, true)
-    _pos(wm._text, 22, 17) _vis(wm._text, true)
+    local tw = _tw(wm._text, s, 13)
+    local w = tw + 34
+    _box(wm._bg, 12, 12, w, 26, Theme.bg, 0.96)
+    _box(wm._border, 12, 12, w, 26, Theme.section_border, 1)
+    _box(wm._dot, 22, 22, 6, 6, Theme.accent)
+    _txt(wm._text, 36, 17, s, Theme.text)
 end
 
 local function _frame()
@@ -1131,19 +1359,34 @@ local function _frame()
     local dt = _clamp(now - S.lastT, 0, 0.1)
     S.lastT = now
     if dt > 0 then S.fps = S.fps + (1 / math.max(dt, 0.001) - S.fps) * 0.05 end
-    S.vw, S.vh = _viewport()
+    if S.paused then return end
+    if now - S.vpT > 0.5 then
+        S.vpT = now
+        local vw, vh = _viewport()
+        if vw ~= S.vw or vh ~= S.vh then S.vw, S.vh, S.dirty = vw, vh, true end
+    end
     local active = _active()
     local mx, my = _mousePos()
-    M.x, M.y = mx, my
     local down = _mouseDown() and active
     M.click = down and not M.down
-    M.down = down
-    _keys(active)
-    for _, w in ipairs(S.windows) do _layout(w) end
-    _input()
-    for _, w in ipairs(S.windows) do _drawWin(w, dt) end
-    _drawNotifs(now)
-    _drawWatermark()
+    local moved = mx ~= M.x or my ~= M.y
+    local btn = down ~= M.down
+    M.x, M.y, M.down = mx, my, down
+    _keys(active, now)
+    if S.dirty or S.anim or moved or btn or S.listening or now - S.fullT > 0.25 then
+        S.dirty = false
+        S.fullT = now
+        for i = 1, #S.windows do _layout(S.windows[i]) end
+        _input()
+        local anim = false
+        for i = 1, #S.windows do
+            if _drawWin(S.windows[i], dt) then anim = true end
+        end
+        if _drawTip(now) then anim = true end
+        S.anim = anim
+    end
+    _drawNotifs(now, dt)
+    _drawWatermark(now)
 end
 
 local function _step()
@@ -1176,4 +1419,5 @@ end
 S.lastT = tick()
 _connect()
 
+_G.QuantomLib = QuantomLib
 return QuantomLib
